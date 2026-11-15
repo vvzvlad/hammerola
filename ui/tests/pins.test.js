@@ -24,10 +24,7 @@ vi.mock('../src/viewport/picking.js', async (importOriginal) => ({
 
 import { EVENT_PIN } from '../src/viewport/events.js'
 import { capOwnerAt } from '../src/viewport/picking.js'
-import {
-  PIN_CASE_PX, PIN_HEAD_PX, PIN_HEAD_WIDTH_PX, PIN_LENGTH_FRACTION, PIN_PX,
-  PIN_SHAFT_PX,
-} from '../src/viewport/options.js'
+import { PIN_CASE_PX, PIN_HEAD_WIDTH_PX, PIN_PX } from '../src/viewport/options.js'
 import { createPins, pinDirection } from '../src/viewport/pins.js'
 import { PINS_ORDER, RINGS_ORDER } from '../src/viewport/scene3d.js'
 import { RECT, framesAsked, rendered, stubFrames } from './component.js'
@@ -53,21 +50,12 @@ afterEach(() => {
 /** World units per CSS pixel on this camera: 30 world units over 600 px. */
 const K = 30 / 600
 
-/** The bounding box the hub publishes with a view (`payload.bb`), which is what
- *  an arrow's length is a fraction of. This one spans 60 x 0 x 80, so
- *  `hypot(60, 0, 80) / 2` is a half-diagonal of 50 world units. */
-const BB = { xmin: -30, xmax: 30, ymin: 0, ymax: 0, zmin: 5, zmax: 85 }
-const BB_HALF = 50
-
-/** How long an arrow standing on that model is, in world units. */
-const LENGTH = PIN_LENGTH_FRACTION * BB_HALF
+/** How long an arrow is in the world at zoom 1: `PIN_PX` pixels. */
+const LENGTH = PIN_PX * K
 
 /**
  * A viewport with a scene, and the arrows for `pins` standing in it, the way
  * `reconcile` and `show()` get them there: the list first, the scene after.
- *
- * `payload` is the fetched view document the element keeps, the one place the
- * model's own size is written down; the default is the box above.
  *
  * The canvas is a real node because the press is read in a capture-phase
  * listener on the window that declines any target but the canvas.
@@ -75,7 +63,7 @@ const LENGTH = PIN_LENGTH_FRACTION * BB_HALF
  * The library's GPU picker answers the background — no part under any pixel —
  * until a test stands a part there (`picks`).
  */
-function scene(pins, payload = { bb: BB }, model = orthoCamera()) {
+function scene(pins, model = orthoCamera()) {
   realCamera(THREE, model)
   const viewer = fakeViewer({ camera: model, rect: RECT })
   viewer.idPicker.pickAt = vi.fn(() => null)
@@ -86,7 +74,9 @@ function scene(pins, payload = { bb: BB }, model = orthoCamera()) {
   viewer.renderer.domElement = canvas
   viewer.scene = new THREE.Scene()
   const vp = fakeViewport(viewer)
-  vp.payload = payload
+  // The fetched view document, with the model's box as every real one carries:
+  // an arrow takes no size from it.
+  vp.payload = { bb: { xmin: -30, xmax: 30, ymin: 0, ymax: 0, zmin: 5, zmax: 85 } }
   vp.dispatchEvent = vi.fn()
   const arrows = createPins(vp)
   widgets.push(arrows)
@@ -186,9 +176,9 @@ describe('where an arrow stands', () => {
     const rim = bounds(node.children.filter(white))
     expect(rim.min.y).toBeCloseTo(-PIN_CASE_PX, 9)
     expect(rim.max.y).toBeCloseTo(PIN_PX + PIN_CASE_PX, 9)
-    expect(rim.max.x).toBeCloseTo(PIN_HEAD_WIDTH_PX / 2 + PIN_CASE_PX, 9)
-    const head = node.children.find(
-      (mesh) => mesh.geometry.type === 'ConeGeometry' && !white(mesh))
+    // The head's rim goes round on an arc, sampled in steps: a hair short.
+    expect(rim.max.x).toBeCloseTo(PIN_HEAD_WIDTH_PX / 2 + PIN_CASE_PX, 1)
+    const head = node.children.find((mesh) => !white(mesh))
     const at = head.geometry.getAttribute('position')
     for (let i = 0; i < at.count; i += 1) {
       if (Math.abs(at.getY(i)) > 1e-9) continue
@@ -196,7 +186,7 @@ describe('where an arrow stands', () => {
     }
   })
 
-  it('touches the point, its body out along the normal, as long as the model says', () => {
+  it('touches the point, its body out along the normal', () => {
     const { group } = scene([
       { id: 'side', p: [1, 2, 45], n: [-2, 0, 0] },
       { id: 'old', p: [3, 4, 45], n: null },
@@ -208,58 +198,23 @@ describe('where an arrow stands', () => {
     isPoint(world(group, old, [0, PIN_PX, 0]), [3, 4, 45 + LENGTH])
   })
 
-  it('is as long as the model is big, and the zoom does not touch it', () => {
-    // The whole of "an object in the scene and not a sticker over the picture":
-    // the length is a fraction of the model's half-diagonal, so a bigger model
-    // carries a bigger arrow and zooming in grows the arrow on the screen along
-    // with the part it points into.
-    const near = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }])
-    expect(length(near.group, near.group.children[0])).toBeCloseTo(LENGTH, 9)
-
-    // Twice the box across the diagonal, twice the arrow.
-    const big = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }],
-                      { bb: { xmin: -60, xmax: 60, ymin: 0, ymax: 0, zmin: 5, zmax: 165 } })
-    expect(length(big.group, big.group.children[0])).toBeCloseTo(2 * LENGTH, 9)
-
-    // The camera is what a screen widget follows: at zoom 2 a pixel is half as
-    // many world units. The arrow does not move at all. The real camera is what
-    // `g.cam` answers with here (`realCamera`), and its frustum is what the
-    // pixel scale is read off.
-    near.model.zoom = 2
-    near.model.cam.zoom = 2
-    rendered(near.viewer)
-    const [node] = near.group.children
-    expect(length(near.group, node)).toBeCloseTo(LENGTH, 9)
-    isPoint(world(near.group, node, [0, 0, 0]), [1, 2, 45])
-  })
-
-  it('falls back to its old on-screen size where the view carries no box', () => {
-    // A view that answers with no usable box would otherwise leave an arrow of
-    // length zero; `PIN_PX * k` is exactly the size it had while it was
-    // measured in pixels.
-    for (const payload of [
-      null,
-      {},
-      { bb: { xmin: 0, xmax: 1, ymin: 0, ymax: 1 } },
-      { bb: { xmin: 0, xmax: 0, ymin: 0, ymax: 0, zmin: 0, zmax: 0 } },
-      { bb: { xmin: 0, xmax: Number.NaN, ymin: 0, ymax: 1, zmin: 0, zmax: 1 } },
-    ]) {
-      const { group } = scene([{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }], payload)
-      expect(length(group, group.children[0]), String(payload && payload.bb))
-        .toBeCloseTo(PIN_PX * K, 9)
-    }
-
-    // And it IS the screen size: at zoom 2 a pixel is half the world, so the
-    // fallback arrow is half as long.
-    const { model, viewer, group } = scene(
-      [{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }], null)
+  it('keeps PIN_PX on the screen at any zoom, its tip on the point', () => {
+    // The owner: an arrow sized from the whole model is huge on a close look
+    // at a small part. At zoom 2 a pixel is half as many world units, so the
+    // arrow is half as long in the world and the same on the screen. The real
+    // camera is what `g.cam` answers with here (`realCamera`), and its frustum
+    // is what the pixel scale is read off.
+    const { model, viewer, group } = scene([{ id: 'c1', p: [1, 2, 45], n: [0, 0, 1] }])
+    const [node] = group.children
+    expect(length(group, node)).toBeCloseTo(LENGTH, 9)
     model.zoom = 2
     model.cam.zoom = 2
     rendered(viewer)
-    expect(length(group, group.children[0])).toBeCloseTo((PIN_PX * K) / 2, 9)
+    expect(length(group, node)).toBeCloseTo(LENGTH / 2, 9)
+    isPoint(world(group, node, [0, 0, 0]), [1, 2, 45])
   })
 
-  it('falls back per arrow under the perspective camera, and draws none behind the eye', () => {
+  it('is sized per arrow at its own depth under the perspective camera, and draws none behind the eye', () => {
     // The eye at z = 60 looking down -Z: a pixel at depth d is
     // 2 d tan(15 deg) / 600 of the world, so each arrow is its own size.
     const perPx = (depth) => (2 * depth * Math.tan(Math.PI / 12)) / RECT.height
@@ -267,7 +222,7 @@ describe('where an arrow stands', () => {
       { id: 'near', p: [0, 0, 45], n: [0, 0, 1] },
       { id: 'far', p: [0, 0, 30], n: [0, 0, 1] },
       { id: 'behind', p: [0, 0, 70], n: [0, 0, 1] },
-    ], null, perspectiveCamera(THREE))
+    ], perspectiveCamera(THREE))
     rendered(viewer)
     const [near, far, behind] = group.children
     expect(length(group, near)).toBeCloseTo(PIN_PX * perPx(15), 9)
@@ -337,7 +292,7 @@ describe('the open comment', () => {
     for (const node of [shut, open]) {
       const rims = node.children.filter((m) => m.material.color.getHex() === 0xffffff)
       const inks = node.children.filter((m) => m.material.color.getHex() !== 0xffffff)
-      expect(rims).toHaveLength(2)
+      expect(rims).toHaveLength(1)
       expect(Math.max(...rims.map((m) => m.renderOrder)))
         .toBeLessThan(Math.min(...inks.map((m) => m.renderOrder)))
     }
@@ -358,8 +313,8 @@ describe('what an arrow is made of', () => {
     const white = (mesh) => mesh.material.color.getHex() === 0xffffff
     const casings = node.children.filter(white)
     const inks = node.children.filter((mesh) => !white(mesh))
-    expect(casings).toHaveLength(2)
-    expect(inks).toHaveLength(2)
+    expect(casings).toHaveLength(1)
+    expect(inks).toHaveLength(1)
     for (const mesh of [...casings, ...inks]) {
       expect(mesh.material.depthTest).toBe(true)
       expect(mesh.material.depthWrite).toBe(true)
@@ -369,21 +324,25 @@ describe('what an arrow is made of', () => {
     for (const mesh of inks) expect(mesh.material.side).not.toBe(THREE.BackSide)
   })
 
-  it('starts the casing round the shaft inside the head, not level with its base', () => {
-    // The casing's rod ends in a cap facing the tip: from the tail that is a
-    // back face, which the casing draws. Level with the base of the ink's head
-    // it would fight the base for every pixel round the shaft, white specks on
-    // red. Inside the head, the ink in front hides it.
+  it('stands the casing PIN_CASE_PX off the ink at every point of its outline', () => {
+    // One distance all round is a rim of one width round the head, the shoulder
+    // and the tail; a casing face nearer the ink than that, level with it, would
+    // fight it for every pixel there — white specks on red. Both solids are
+    // turned outlines, so it is checked in the half-plane they are turned in.
     const { group } = scene([{ id: 'c1', p: [0, 0, 45], n: [0, 0, 1] }])
     const [node] = group.children
-    const rod = node.children.find((mesh) => mesh.geometry.type === 'CylinderGeometry'
-      && mesh.material.color.getHex() === 0xffffff)
-    rod.geometry.computeBoundingBox()
-    const y = rod.geometry.boundingBox.min.y
-    expect(y).toBeCloseTo(PIN_HEAD_PX - PIN_CASE_PX, 9)
-    // ...and the cap there is narrower than the ink head at that height.
-    expect(PIN_SHAFT_PX / 2 + PIN_CASE_PX)
-      .toBeLessThan((PIN_HEAD_WIDTH_PX / 2) * y / PIN_HEAD_PX)
+    const white = (mesh) => mesh.material.color.getHex() === 0xffffff
+    const outline = (mesh) => mesh.geometry.parameters.points
+    const ink = outline(node.children.find((mesh) => !white(mesh)))
+    const off = (p) => Math.min(...ink.slice(1).map((b, i) => {
+      const a = ink[i]
+      const along = b.clone().sub(a)
+      const t = along.lengthSq() ? Math.min(1, Math.max(0, p.clone().sub(a).dot(along) / along.lengthSq())) : 0
+      return p.distanceTo(a.clone().addScaledVector(along, t))
+    }))
+    for (const p of outline(node.children.find(white))) {
+      expect(off(p), `${p.x}, ${p.y}`).toBeCloseTo(PIN_CASE_PX, 9)
+    }
   })
 })
 

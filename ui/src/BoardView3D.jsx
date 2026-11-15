@@ -38,8 +38,8 @@
 //             the part's own frame) and selects nothing; `marks`, the open
 //             comments and the draft, `{ id, part, point, normal, active }`,
 //             each an arrow on its part as the model's page draws one
-//             (`arrowKit` in viewport/pins.js), as long against the board as
-//             that one is against the model (`PIN_LENGTH_FRACTION`), a left
+//             (`arrowKit` in viewport/pins.js), `PIN_PX` long on the screen
+//             at any zoom (`sizeArrows`), a left
 //             click on it named back (`onMarker`), the ids of those whose
 //             part the model has none of told (`onLost`) as that changes;
 //             `focus`, a part to frame, which then is told done (`onFocused`)
@@ -114,7 +114,6 @@ import {
 } from './panelstyle.js';
 import { CHEVRON, NET_LABEL, NET_NAME } from './PcbPanel.jsx';
 import { css, MONO } from './style.jsx';
-import { PIN_LENGTH_FRACTION, PIN_PX } from './viewport/options.js';
 import { arrowKit, pinDirection } from './viewport/pins.js';
 import { throttled } from './viewport/sizing.js';
 
@@ -231,7 +230,6 @@ class Stage {
     this.pins = new THREE.Object3D();
     this.scene.add(this.pins);
     this.arrows = new Map();
-    this.arrowLength = (PIN_LENGTH_FRACTION * this.box.getSize(new THREE.Vector3()).length()) / 2;
     this.camera = new THREE.PerspectiveCamera(FOV, 1, this.radius / 100, this.radius * 100);
     this.scene.add(this.camera);
     // Two directional lights: one fixed above the board, one riding with the
@@ -380,8 +378,30 @@ class Stage {
     this.camera.near = distance / 20;
     this.camera.far = distance + this.radius * 4;
     this.camera.updateProjectionMatrix();
+    this.sizeArrows(this.camera, this.host.clientHeight);
     this.renderer.render(this.scene, this.camera);
     this.placeLabel();
+  }
+
+  /**
+   * Each comment's arrow `PIN_PX` CSS pixels long on a canvas `height` pixels
+   * tall seen through `camera`, as on the model's page (`place` in
+   * viewport/pins.js): the world size of a pixel at the arrow's tip, the
+   * frustum's height over the canvas's — at the tip's depth under perspective.
+   * An arrow on or behind the eye keeps its last size; the near plane cuts it.
+   */
+  sizeArrows(camera, height) {
+    if (!(height > 0) || !this.arrows.size) return;
+    camera.updateMatrixWorld();
+    const view = camera.getWorldDirection(new this.THREE.Vector3());
+    const tip = new this.THREE.Vector3();
+    for (const node of this.arrows.keys()) {
+      const span = camera.isOrthographicCamera
+        ? (camera.top - camera.bottom) / camera.zoom
+        : 2 * Math.tan((camera.fov * Math.PI) / 360) / camera.zoom
+          * tip.copy(node.position).sub(camera.position).dot(view);
+      if (span > 0) node.scale.setScalar(span / height);
+    }
   }
 
   /** The measurement's dots and label over their points as the camera sees
@@ -639,6 +659,7 @@ class Stage {
     // The measurement is this view's, its dots and label over this canvas
     // only: an inset draws the board without it.
     this.measured.visible = false;
+    this.sizeArrows(camera, height);
     this.renderer.render(this.scene, camera);
     this.measured.visible = true;
     const [w, h] = [Math.round(width * ratio), Math.round(height * ratio)];
@@ -693,7 +714,6 @@ class Stage {
       this.kit.paint(arrow, Boolean(mark.active));
       arrow.node.position.copy(p);
       arrow.node.quaternion.setFromUnitVectors(y, new THREE.Vector3(...pinDirection(n && n.toArray(), GLTF_UP)));
-      arrow.node.scale.setScalar(this.arrowLength / PIN_PX);
       this.pins.add(arrow.node);
       this.arrows.set(arrow.node, mark.id);
     }

@@ -488,6 +488,46 @@ describe('comments on the 3D view of a board', () => {
     expect(view.props.onSelect.mock.calls).toEqual([['C1']])
   })
 
+  it('keeps each arrow PIN_PX long on the screen, the camera near or far', async () => {
+    // The arrow is laid out in pixels, so its scale is the world size of a
+    // pixel at its tip: 2 d tan(fov / 2) over the 200 px holder at depth d.
+    const { view } = await loaded({ comment: commenting({ marks: [markOn('c1', 'C1')] }) })
+    Object.defineProperty(view.stage.host, 'clientHeight', { value: 200 })
+    const { camera, controls } = view.stage
+    const [arrow] = view.stage.pins.children
+    for (const closer of [1, 0.25]) {
+      camera.position.sub(controls.target).multiplyScalar(closer).add(controls.target)
+      view.stage.request()
+      runFrames()
+      const depth = arrow.position.clone().sub(camera.position).dot(camera.getWorldDirection(new THREE.Vector3()))
+      expect(arrow.scale.x).toBeCloseTo((2 * depth * Math.tan((FOV_3D / 2) * (Math.PI / 180))) / 200, 9)
+    }
+  })
+
+  it('sizes the arrows for an inset\'s camera while it draws, and for its own again after', async () => {
+    const { view } = await loaded({ comment: commenting({ marks: [markOn('c1', 'C1')] }) })
+    runFrames()
+    document.createElement('div').append(view.host)
+    Object.defineProperties(view.host, { clientWidth: { value: 200 }, clientHeight: { value: 150 } })
+    const inset = document.createElement('canvas')
+    Object.defineProperties(inset, { clientWidth: { value: 120 }, clientHeight: { value: 80 } })
+    inset.getContext = () => ({ fillRect: vi.fn(), drawImage: vi.fn() })
+    const [arrow] = view.stage.pins.children
+    const drawn = []
+    renderers[0].render.mockImplementation((scene, used) => drawn.push([used, arrow.scale.x]))
+    const camera = { center: { x: 0, y: 0 }, zoom: 4, rotation: 0, mirror: false, view3d: true, tilt: 0 }
+    expect(view.scene3d.render(camera, inset, false)).toBe(true)
+    const [[insetCamera, insetScale], [ownCamera, ownScale]] = drawn
+    // The inset is the 2D view's zoom, 1 / (zoom * 1000) m to a CSS pixel.
+    expect(insetCamera.isOrthographicCamera).toBe(true)
+    expect(insetScale).toBeCloseTo(1 / 4000, 12)
+    // Its own frame: 2 d tan(fov / 2) over the 150 px holder at the tip's depth.
+    const { camera: own } = view.stage
+    const depth = arrow.position.clone().sub(own.position).dot(own.getWorldDirection(new THREE.Vector3()))
+    expect(ownCamera).toBe(own)
+    expect(ownScale).toBeCloseTo((2 * depth * Math.tan((FOV_3D / 2) * (Math.PI / 180))) / 150, 9)
+  })
+
   it('opens the comment whose arrow is clicked, the tool armed or not, selecting and placing nothing', async () => {
     const comment = commenting({ marks: [markOn('c1', 'C1')] })
     const { view, update, canvas } = await loaded({ comment })

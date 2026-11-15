@@ -68,8 +68,8 @@ export function bedsOf(entry) {
  * section travels on the bed's scale (`niceStep` in tools.js, `sectionLimit` in
  * section.js).
  *
- * A copy: the document as fetched keeps the parts' box, which the comment
- * arrows take their length from (`pins.js`). Spelled as the build's
+ * A copy: the document as fetched (`payload` in element.js) keeps the parts'
+ * box. Spelled as the build's
  * `views._widen_bb` widens the same box.
  */
 export function framedWithBeds(scene, entry) {
