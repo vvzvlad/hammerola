@@ -23,7 +23,7 @@
 import { describe, expect, it } from 'vitest'
 
 import {
-  HammerolaProjects, SORT_CMP, SORT_LABELS, VIEW_BODIES, VIEW_ICONS,
+  arrange, HammerolaProjects, SORT_CMP, SORT_LABELS, VIEW_BODIES, VIEW_ICONS,
 } from '../src/HammerolaEntry.jsx'
 import { PROJECT_SORTS, PROJECT_VIEWS } from '../src/store.js'
 import { links } from './eltree.js'
@@ -144,6 +144,20 @@ describe('every view the hub will remember', () => {
       const drawn = links(VIEW_BODIES[id](page, ROWS))
       expect(drawn.map((el) => el.key), `the ${id} body drew ${drawn.length} links for `
         + `${ROWS.length} rows`).toEqual(ROWS.map((row) => row.pid))
+    }
+  })
+
+  it('has a body that draws one link per folder first, to that folder, then the rows', () => {
+    // The folders as `arrange` shapes them, and the page's real `folderLink`,
+    // so the hrefs are the addresses a click would open.
+    const { folders } = arrange([{ ...ROWS[0], title: 'wb/Adapter' }, { ...ROWS[1], title: 'att/Bracket' }],
+      null, 'name')
+    const withFolders = { ...page, folderLink: HammerolaProjects.prototype.folderLink }
+    for (const id of PROJECT_VIEWS) {
+      const drawn = links(VIEW_BODIES[id](withFolders, ROWS, folders))
+      expect(drawn.map((el) => el.props.href).slice(0, 2), `the ${id} body`)
+        .toEqual(['/?folder=att', '/?folder=wb'])
+      expect(drawn.map((el) => el.key).slice(2), `the ${id} body`).toEqual(ROWS.map((row) => row.pid))
     }
   })
 

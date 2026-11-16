@@ -1,6 +1,7 @@
 // A page's address as ui/src/address.js reads it and spells it back. The cases
-// are those of the documents page's `d=`; what the pages write through it is
-// in docshell, viewlink, viewdocs, revswitch, kicad and header.
+// are those of the documents page's `d=` and the front page's `folder=`; what
+// the pages write through it is
+// in docshell, viewlink, viewdocs, revswitch, kicad, header and entry.
 
 import { describe, expect, it, onTestFinished, vi } from 'vitest'
 
@@ -20,6 +21,24 @@ describe('a document in the address', () => {
     expect(query('', { doc: 'report.pdf' })).toBe('?d=report.pdf')
     expect(query('?d=report.pdf', { doc: null })).toBe('')
     expect(query('?x=1&d=a', { doc: 'page.html' })).toBe('?x=1&d=page.html')
+  })
+})
+
+describe('a folder in the address', () => {
+  /** The front page's address with folder `folder` open. */
+  const front = (folder) => format(respell(parse({ pathname: '/', search: '', hash: '' }, null), { folder }))
+
+  it('is `folder=`, escaped, and reads back as the name it was', () => {
+    expect(front('wb')).toBe('/?folder=wb')
+    expect(front('Счётчики&co')).toBe(`/?folder=${encodeURIComponent('Счётчики&co')}`)
+    for (const name of ['wb', 'Счётчики&co', 'a+b']) {
+      expect(parse({ pathname: '/', search: front(name).slice(1), hash: '' }, null).folder).toBe(name)
+    }
+  })
+
+  it('is none at the root, and leaves the rest standing', () => {
+    expect(query('?folder=wb&x=1', { folder: null })).toBe('?x=1')
+    expect(parse({ pathname: '/', search: '', hash: '' }, null).folder).toBeNull()
   })
 })
 
