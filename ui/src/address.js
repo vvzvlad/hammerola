@@ -4,16 +4,17 @@
 // project is a plain navigation (`location.href`).
 //
 // An address is the path of a build — or of a comparison of one (`pageFrom` in
-// hub.js) — and a query naming what is on screen: the model's view `v=`, the
+// hub.js), or the front page's `/` — and a query naming what is on screen: the model's view `v=`, the
 // document over the model or on the page of a build with no model `d=`, the
 // camera's frame `c=` (only a Share link carries it: the page reads it on load
-// and never puts it in the address bar), and the key to a build's files
-// `files=`. `parse` reads all of it at once, with the state of the history
-// entry; `format` writes it back. What an
+// and never puts it in the address bar), the key to a build's files
+// `files=`, and the folder the front page's list has open `folder=`. `parse`
+// reads all of it at once, with the state of the history entry; `format`
+// writes it back. What an
 // address names is each page's choice; how it is spelled is this module's:
 //
-//   * the parameters go in the order v, d, c, files, each value escaped as a
-//     component of a URL but `c=`, whose commas stay as they are;
+//   * the parameters go in the order v, d, c, files, folder, each value escaped
+//     as a component of a URL but `c=`, whose commas stay as they are;
 //   * nothing is written for a field with no value: the first view has no `v=`
 //     (`viewParam`);
 //   * a parameter a change does not name stays where it stands, spelled as it
@@ -36,6 +37,7 @@ export const VIEW_QUERY = 'v';
 export const DOC_QUERY = 'd';
 export const CAMERA_QUERY = 'c';
 export const FILES_QUERY = 'files';
+export const FOLDER_QUERY = 'folder';
 
 // The fields in the order they are written, each with its key and how its
 // value is spelled. `c=` is eleven numbers joined by commas (`encodeCamera` in
@@ -45,6 +47,7 @@ const FIELDS = [
   ['doc', DOC_QUERY, encodeURIComponent],
   ['camera', CAMERA_QUERY, String],
   ['files', FILES_QUERY, encodeURIComponent],
+  ['folder', FOLDER_QUERY, encodeURIComponent],
 ];
 
 const keyOf = (pair) => pair.split('=')[0];
@@ -54,7 +57,8 @@ const keyOf = (pair) => pair.split('=')[0];
  * default) and the history entry's `state`, read whole: the build's `pid`,
  * `slot`, `base` and `cmp` (`pageFrom`), the `path`, the query's `params` as
  * written, the `hash`, and the value of each field (`view`, `doc`,
- * `camera` — the text of `c=` — and `files`), or null where it is not there.
+ * `camera` — the text of `c=` —, `files` and `folder`), or null where it is
+ * not there.
  */
 export function parse(where = window.location, state = window.history.state) {
   const query = new URLSearchParams(where.search);

@@ -15,6 +15,10 @@
  *                 more variants (branches) says `N variants` (`index_card`).
  *   createdAt  -> the OLDEST build the hub still holds, labelled "first built"
  *                 (render.index_card).
+ *   folder     -> nothing the hub keeps: the title's text before its first `/`
+ *                 (`folderOf`). The list draws a folder as one card of its
+ *                 projects, and the address names the folder open
+ *                 (`?folder=`, address.js).
  *   login      -> the same `EDIT_TOKEN` and storage functions as the build page
  *                 (store.js); the field says that name because it is what
  *                 `hammerola login` asks for.
@@ -43,13 +47,14 @@
 
 import React from 'react';
 
+import { format, navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import {
   deleteProject, hubOrigin, loadIndex, loadStart, projectCard, projectUrl,
   stamp, Unauthorized,
 } from './hub.js';
 import {
   ACCENT_MONO, BADGE_SANS, BODY_MONO, BODY_SANS, CARD, DANGER, DIALOG_BTN,
-  FAINT_MONO, FILL, HEADER_BAR, HEADER_RULE, HIDDEN, META_MONO,
+  ELLIPSIS, FAINT_MONO, FILL, HEADER_BAR, HEADER_RULE, HIDDEN, META_MONO,
   META_MONO_ONE_LINE, NAME_SANS, NOTE_BOX, ON_CARD, PILL, ROW, SEGMENTED, STACK,
   SUNKEN, TAB_OFF, TAB_ON, TITLE, WORDMARK,
 } from './panelstyle.js';
@@ -598,6 +603,35 @@ const Preview = ({ radius, src }) => (
 );
 
 /**
+ * A folder's picture: the pictures of its first four projects, two by two,
+ * each on its own plate as a card draws it. A folder of fewer leaves the rest
+ * of the squares empty. `rows` are the folder's projects in the list's order.
+ */
+const Mosaic = ({ rows }) => (
+  <div style={css('position:absolute;inset:0;display:grid;grid-template:1fr 1fr/1fr 1fr;'
+    + 'gap:1px;background:var(--line-soft)')}
+  >
+    {[0, 1, 2, 3].map((i) => (
+      <div key={i} style={css('position:relative;background:var(--sunken-bg)')}>
+        {rows[i] && <Preview src={rows[i].card || rows[i].preview} />}
+      </div>
+    ))}
+  </div>
+);
+
+/** The mark before a folder's name. */
+const FolderGlyph = () => (
+  <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"
+    strokeLinejoin="round" style={css('flex:none;color:var(--text-muted)')}
+  >
+    <path d="M1.8 3.4h4.4l1.6 1.8h6.4v7.4H1.8z" />
+  </svg>
+);
+
+/** A name with something small before it: a folder's glyph, the header's trail. */
+const TIGHT_ROW = 'display:flex;align-items:center;gap:6px;min-width:0';
+
+/**
  * What the newest build of this project is.
  *
  * One identifier: a revision is named by the digest of its sources, cut to seven
@@ -656,6 +690,59 @@ export const RevLine = ({ p }) => {
 };
 
 /**
+ * The folder a project's title puts it in, and its name there; null for a
+ * project outside any. The folder is the text before the first `/`, when it is
+ * a word — not empty, no whitespace — and a name follows it: `wb/meter` is
+ * `meter` in `wb`, while `Модуль WB-MGE / WB-MGU (wb-mge-mgu)` is a title with
+ * a slash in it. One level: `a/b/c` is `b/c` in `a`.
+ */
+export function folderOf(title) {
+  const cut = title.indexOf('/');
+  if (cut < 1) return null;
+  const folder = title.slice(0, cut);
+  const name = title.slice(cut + 1).trim();
+  return /\s/.test(folder) || !name ? null : { folder, name };
+}
+
+/**
+ * The list with folder `folder` open, out of `projects` in the order of sort
+ * `sort` (`sorted`): `folder` is the one open, null at the root; `folders` are
+ * drawn before the `rows`, each row a project's card.
+ *
+ * At the root the rows are the projects in no folder; inside one they are its
+ * projects, named without it. Rows keep their order in `projects`. A folder is
+ * shaped as a row for the sort's comparator — `title` its name, `built` and
+ * `first` the newest of its projects' — and carries its `projects`, named
+ * without it, in their order. A folder no project is in (an old link, or its
+ * last project removed) is the root.
+ */
+export function arrange(projects, folder, sort) {
+  const groups = new Map();
+  const loose = [];
+  projects.forEach((p) => {
+    const at = folderOf(p.title);
+    if (!at) {
+      loose.push(p);
+      return;
+    }
+    if (!groups.has(at.folder)) groups.set(at.folder, []);
+    groups.get(at.folder).push({ ...p, title: at.name });
+  });
+  if (groups.has(folder)) return { folder, folders: [], rows: groups.get(folder) };
+  const newest = (rows, field) => rows.map((p) => p[field]).reduce((a, b) => (ts(b) > ts(a) ? b : a));
+  const folders = [...groups].map(([title, rows]) => ({
+    title, projects: rows, built: newest(rows, 'built'), first: newest(rows, 'first'),
+  }));
+  return { folder: null, folders: folders.sort(SORT_CMP[sort]), rows: loose };
+}
+
+/** A folder's key among the cards, for React and the hover: its name and a
+ *  slash, which no project id holds (`SAFE_ID` in src/store.py). */
+const folderKey = (name) => `${name}/`;
+
+const projectCount = (n) => (n === 1 ? '1 project' : `${n} projects`);
+
+/**
  * Everything an arrangement's id reaches, in tables keyed by that id.
  *
  * A sort is a tab, a comparator and a value store.js keeps; a view is a tab, a
@@ -685,13 +772,38 @@ export const VIEW_ICONS = Object.freeze({
   list: 'M1 1.5h11v2H1zM1 5.5h11v2H1zM1 9.5h11v2H1z',
 });
 
-/** How each view draws the rows. `page` is the component: hover, card style, and
- *  the delete control — the one thing on a card that is not part of its link. */
+/** How each view draws the rows, and the folders before them (`arrange`).
+ *  `page` is the component: hover, card style, a folder's link, and the delete
+ *  control — the one thing on a card that is not part of its link. */
 export const VIEW_BODIES = Object.freeze({
-  grid: (page, rows) => (
+  grid: (page, rows, folders = []) => (
     // `min(320px,100%)`, not `320px`: on a phone the container is narrower than
     // 320px after its padding, and a fixed floor would scroll the page sideways.
     <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:16px')}>
+      {folders.map((f) => (
+        <a
+          key={folderKey(f.title)}
+          {...page.folderLink(f.title)}
+          {...page.hover(folderKey(f.title))}
+          style={css(`${page.cardStyle(folderKey(f.title))}overflow:hidden;display:flex;flex-direction:column`)}
+        >
+          <div style={css('position:relative;height:190px;flex:none')}>
+            <Mosaic rows={f.projects} />
+          </div>
+          <div style={css('display:flex;flex-direction:column;gap:8px;padding:12px 14px 13px')}>
+            <div style={css('display:flex;flex-direction:column;gap:2px;min-width:0')}>
+              <span style={css(TIGHT_ROW)}>
+                <FolderGlyph />
+                <span style={css(TITLE)}>{f.title}</span>
+              </span>
+              <span style={css(META_MONO_ONE_LINE)}>{projectCount(f.projects.length)}</span>
+            </div>
+            <div style={css(ROW)}>
+              <span title={stamp(f.built)} style={css(`${META_MONO};margin-left:auto;white-space:nowrap`)}>{relTime(f.built)}</span>
+            </div>
+          </div>
+        </a>
+      ))}
       {rows.map((p) => (
         <a
           key={p.pid}
@@ -728,8 +840,31 @@ export const VIEW_BODIES = Object.freeze({
     </div>
   ),
 
-  list: (page, rows) => (
+  list: (page, rows, folders = []) => (
     <div style={css('display:flex;flex-direction:column;gap:6px')}>
+      {/* A folder's count and time share its one meta line: in the columns of
+          a project's row the time would stand alone at the far right. */}
+      {folders.map((f) => (
+        <a
+          key={folderKey(f.title)}
+          {...page.folderLink(f.title)}
+          {...page.hover(folderKey(f.title))}
+          style={css(`${page.cardStyle(folderKey(f.title))}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
+        >
+          <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
+            <Mosaic rows={f.projects} />
+          </div>
+          <div style={css('flex:1;min-width:0;display:flex;flex-direction:column;gap:2px')}>
+            <span style={css(TIGHT_ROW)}>
+              <FolderGlyph />
+              <span style={css(`font:600 13px ${SANS};white-space:nowrap;overflow:hidden;text-overflow:ellipsis`)}>{f.title}</span>
+            </span>
+            <span style={css(META_MONO_ONE_LINE)}>
+              {projectCount(f.projects.length)} · <span title={stamp(f.built)}>{relTime(f.built)}</span>
+            </span>
+          </div>
+        </a>
+      ))}
       {rows.map((p) => (
         <a
           key={p.pid}
@@ -812,6 +947,9 @@ export class HammerolaProjects extends React.Component {
     this.state = {
       view: readProjectView(),
       sort: readProjectSort(),
+      // The folder the address names, null for none; `arrange` draws the root
+      // for a folder no project is in.
+      folder: parse().folder,
       hover: null,
       copied: '',
       // The confirmation: `doomed` is the pid being confirmed (and whether the
@@ -826,9 +964,38 @@ export class HammerolaProjects extends React.Component {
     };
   }
 
+  // Back and Forward between folders: the folder of the entry moved to.
+  componentDidMount() {
+    subscribe(this.onPop);
+  }
+
+  componentWillUnmount() {
+    unsubscribe(this.onPop);
+  }
+
+  onPop = (at) => this.setState({ folder: at.folder, hover: null });
+
   get view() { return this.state.view || this.props.defaultView; }
 
   get sort() { return this.state.sort || this.props.defaultSort; }
+
+  /**
+   * What makes folder `name`, or the root for null, a link: its own address,
+   * so a middle or modified click opens it in a tab as the browser does, and a
+   * plain click opens it here as a new entry of history. The card under the
+   * pointer goes with the page it was on.
+   */
+  folderLink(name) {
+    return {
+      href: format(respell(parse(), { folder: name })),
+      onClick: (event) => {
+        if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) return;
+        event.preventDefault();
+        navigate(respell(parse(), { folder: name }), { push: true });
+        this.setState({ folder: name, hover: null });
+      },
+    };
+  }
 
   /**
    * A tab click: what is drawn now, and what the next visit opens on.
@@ -1090,7 +1257,7 @@ export class HammerolaProjects extends React.Component {
   }
 
   render() {
-    const rows = this.sorted();
+    const { folder, folders, rows } = arrange(this.sorted(), this.state.folder, this.sort);
     // Looked up, no fallback — see `sorted()`.
     const body = VIEW_BODIES[this.view];
 
@@ -1114,10 +1281,19 @@ export class HammerolaProjects extends React.Component {
             <span style={css(WORDMARK)}>hammerola</span>
           </div>
           <div style={css(HEADER_RULE)} />
-          <span style={css(`font:600 13px ${SANS};color:var(--text-soft)`)}>Projects</span>
+          {folder ? (
+            <span style={css(TIGHT_ROW)}>
+              <a {...this.folderLink(null)} style={css(`font:600 13px ${SANS};color:var(--text-soft);text-decoration:none`)}>Projects</a>
+              <span style={css(`font:400 13px ${SANS};color:var(--text-faint)`)}>/</span>
+              <span style={css(`font:600 13px ${SANS};color:var(--text);${ELLIPSIS}`)}>{folder}</span>
+            </span>
+          ) : (
+            <span style={css(`font:600 13px ${SANS};color:var(--text-soft)`)}>Projects</span>
+          )}
           <span style={css(FILL)} />
+          {/* Every project on the hub at the root; inside a folder, its own. */}
           <span style={css(`font:400 11px ${MONO};color:var(--text-faint)`)}>
-            {rows.length === 1 ? '1 project' : `${rows.length} projects`}
+            {projectCount(folder ? rows.length : this.props.projects.length)}
           </span>
           {/* Being here is being signed in, so this is the header's only
               control. */}
@@ -1154,9 +1330,9 @@ export class HammerolaProjects extends React.Component {
           </div>
 
           {/* ── the rows, drawn the way the chosen view draws them ── */}
-          {body(this, rows)}
+          {body(this, rows, folders)}
 
-          {!rows.length && (
+          {!this.props.projects.length && (
             <div style={css(`padding:60px 0;text-align:center;font:400 12px ${SANS};color:var(--text-muted)`)}>
               No projects yet.
             </div>

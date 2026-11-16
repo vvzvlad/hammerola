@@ -473,8 +473,8 @@
 - `ui/src/address.js` — the page's address and the browser's history, the one
   place history is written or followed: `parse` reads the address on screen whole
   (the build or comparison of its path, `v=`, `d=`, `c=`, `files=`, the
-  hash and the entry's state), `respell` and `fresh` make the address a write
-  names (the order v, d, c, files, `c=` unescaped, a parameter the write
+  front page's `folder=`, the hash and the entry's state), `respell` and `fresh` make the address a write
+  names (the order v, d, c, files, folder, `c=` unescaped, a parameter the write
   does not name left where it stands) and `format` joins it into text,
   `navigate` is the only caller of `pushState` and `replaceState`, and its own
   listener the only one on `popstate`, handing the address to the components
@@ -483,9 +483,10 @@
   that, and `ui/tests/addressguard.js` holds a test to leaving no subscriber.
   What an address names stays each page's choice: `HammerolaViewer`
   (`screenParams`, `pushChoice`, `writeView`, `writeDoc`, `writeSheet`), the
-  Share window's link (`chromeview.js`), `DocShell.pick` and a markdown link
+  Share window's link (`chromeview.js`), `DocShell.pick`, a markdown link
   to another document or to the page's own address (`docLinks` in
-  `DocumentView.jsx`)
+  `DocumentView.jsx`) and the front page's open folder
+  (`HammerolaProjects.folderLink`, `onPop` in `HammerolaEntry.jsx`)
 - `ui/src/BuildPage.jsx` — the build page's root, which `ui/src/main.jsx`
   mounts at `hmr_root` with the build's meta.json: the header (`Header.jsx`)
   and under it the page the build has, `HammerolaViewer.jsx` or, for
