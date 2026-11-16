@@ -262,6 +262,16 @@ def test_each_publishes_with_its_own_title_open_and_as_its_type(hub_factory):
         "board.kicad_prl").exists()
 
 
+def test_the_3d_model_has_its_solder_mask_open_over_the_pads():
+    # KiCad 10 cuts the mask's openings over the pads only while it exports
+    # the pads (`EXPORTER_STEP::buildFootprint3DShapes`): a mask exported
+    # without them covers every pad and ring, and the page's own copper lies
+    # under it. Tracks and zones the page draws itself, so they stay out.
+    flags = set(docsbuild.GLB_FLAGS)
+    assert {"--include-soldermask", "--include-pads"} <= flags
+    assert not flags & {"--include-tracks", "--include-zones"}
+
+
 def test_a_board_kicad_cli_refuses_fails_the_build_with_what_it_said(hub_factory):
     refused = {("glb", docsbuild.GLB_FLAGS): (422, "Failed to load board\n")}
     with KicadStub(refused) as stub:

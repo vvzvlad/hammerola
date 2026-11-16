@@ -124,11 +124,15 @@ MAX_KICAD_DEPTH = 8
 SHEETFILE = re.compile(r'\(property\s+"Sheet ?file"\s+"((?:[^"\\]|\\.)*)"')
 ESCAPED = re.compile(r"\\(.)")
 
-# The board's 3D model as the page's 3D view shows it: no copper, which the
-# page draws itself from the board (SPEC, «Медь в 3D»).
+# The board's 3D model as the page's 3D view shows it. The page draws the
+# copper itself from the board (SPEC, «Медь в 3D») and hides the `.glb`'s, so
+# no tracks or zones; the pads are exported all the same, because KiCad cuts
+# the solder mask's openings over the pads only while it exports the pads
+# (`EXPORTER_STEP::buildFootprint3DShapes`, under `m_ExportPads`): without
+# them the mask covers every pad and every ring.
 BOARD_GLB = ".glb"
-GLB_FLAGS = ("--subst-models", "--include-silkscreen", "--include-soldermask",
-             "--no-dnp")
+GLB_FLAGS = ("--subst-models", "--include-pads", "--include-silkscreen",
+             "--include-soldermask", "--no-dnp")
 # How long the hub waits for one; the export runs in the hub's own worker.
 KICAD_TIMEOUT = 300
 

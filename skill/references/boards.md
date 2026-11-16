@@ -53,9 +53,11 @@ unless it writes that key. The `.glb` is made by the hub, from the board of the 
 name, on every push: list it, do not commit it — a listed `.glb` that the tree also
 holds beside a board of its name refuses the push. A hub run without its KiCad
 service publishes a committed `.glb` as it is and refuses a listed one the tree lacks. The export is `kicad-cli pcb export glb --subst-models
---include-silkscreen --include-soldermask --no-dnp` (about 10 MB for a 235-part board);
-a `.glb` with no board of its name beside it is published as committed. It carries no
-tracks, pads or zones: the hub draws the copper in 3D itself, from the `.kicad_pcb` with
+--include-pads --include-silkscreen --include-soldermask --no-dnp` (about 10 MB for a
+235-part board without the pads; the pads add to it);
+a `.glb` with no board of its name beside it is published as committed. It carries the
+pads, because KiCad opens the solder mask over a pad only when it exports the pad, and no
+tracks or zones: the hub draws the copper in 3D itself, from the `.kicad_pcb` with
 the same path minus the extension, with its nets and layers. A part gets a body only
 from a 3D model the hub can reach: KiCad's standard library, or a file inside the
 project (`${KIPRJMOD}/…`); a model outside the project leaves the part bare.
