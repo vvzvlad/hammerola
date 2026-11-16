@@ -5,7 +5,8 @@
 A build system and a viewer for parts that an agent models in code. The agent
 writes a `model.py` in CadQuery and pushes the source; the hub computes the
 geometry and shows the part in a browser. The person turns it, hides what is in
-the way, cuts a section through it, measures it, downloads it as STEP/STL/3MF,
+the way, cuts a section through it, measures it, swings its lid and slides its
+drawer along the joints the model declares, downloads it as STEP/STL/3MF,
 clicks a spot on the model and leaves a note there; the agent reads the notes
 with `hammerola comments`, fixes the code and pushes the next revision. No CAD
 application is needed anywhere: the model is Python, and the kernel that
@@ -14,13 +15,17 @@ computes it is in the hub.
 The viewer is there because an STL an agent hands back is a poor thing to
 review, and words are a poor way to say what to fix. The page gives what a CAD
 gives — each part in its own colour, a section through anything, parts you can
-drag aside — and a place to point at: the comment is pinned to that point, with
+drag aside, an orthographic camera as a drawing has and perspective as a switch
+in Settings, a Studio look for showing the part off — and a place to point at:
+the comment is pinned to that point, with
 the camera angle it was written from and, when there is one, a photo of the
 printed part. A revision's URL never changes and never expires, so a link is
 how a part is shown to someone or sent to a workshop. What goes with the part
 publishes on the same page — a KiCad schematic and board with the board's
 Gerbers, a PDF, a drawing, a Markdown note, or a file of any other kind — and a
-project with no model at all publishes those on their own. The name is from
+project with no model at all publishes those on their own; a board of the
+project can also stand inside the model, exported afresh by the hub on every
+push. The name is from
 "pianola" — a mechanism that plays itself.
 
 <!-- Screenshots live in docs/images/ rather than in static/. static/ is the
@@ -50,7 +55,11 @@ touched the project's directory, publishes it under the commit's sha and only
 then lets git move the branch — a build that fails refuses the push, with its
 log in the output, so the branch on the hub never stands on a commit without a
 build. Builds published before the hub spoke git were imported into that
-history as commits of their own, under their old names.
+history as commits of their own, under their old names. A project that keeps a
+`version.py` beside `project.json` has each revision labelled with what its
+`version()` returns, worked out where the project already keeps its version (a
+`ChangeLog`, say); the revision where the version changes is a tag, and "Tags
+only" in the revision picker lists the tags alone.
 
 **A published revision never changes and never expires.** Its URL is served as
 immutable, and there is no retention anywhere on the hub — nothing ages out and
@@ -238,13 +247,19 @@ hammerola status                 # latest, dev and the revisions of this branch'
 hammerola log <revision>         # read a build log again
 hammerola artifacts <revision>   # its STEP/STL/3MF and its documents
 hammerola diff <rev> <rev>       # what moved, in geometry and in source
+hammerola snapshot <revision>    # a PNG of a view, drawn by the hub without a rebuild
+hammerola measure <rev> <a> <b>  # the smallest gap between two parts, in mm
 hammerola comments               # notes left on this project's builds
-hammerola proposal               # the edit the viewer's reader proposed, as code
+hammerola proposal               # the rough body drawn over the model in the browser, as numbers
 hammerola rename "New title"     # the title, never the id
 hammerola skill                  # is the installed agent skill current?
 hammerola skill update           # write the hub's copy over it
 hammerola update                 # replace THIS TOOL with the hub's copy
 ```
+
+A title with a prefix before a `/` — `wb/meter` — puts the project into the
+folder `wb` on the hub's front page, so `rename` moves a project into a folder
+and out of it, with no push.
 
 `skill` and `update` are the odd ones out: they ask about this MACHINE rather
 than about a project. `skill` exists because the skill is the only thing here
@@ -409,7 +424,12 @@ project. Four things about it are worth knowing before writing the second one:
   different shape in place. The reason is required and is printed into the
   build log, because an unexplained second shape under a part's name is the
   look-alike this whole design refuses; and the plate will not take one, there
-  being no "in place" on a bed.
+  being no "in place" on a bed. A reference or a group may also carry a
+  `"joint"` — `checklib.revolute` turns it in degrees about an axis,
+  `checklib.slider` slides it in millimetres — and the viewer gives the view a
+  slider per joint, with the view's `"poses"` as named positions. Zero is where
+  `at` puts the part, which is the pose every gate checks; `checks()` runs the
+  same joint through its travel.
 * **`checks()` runs on the hub, and a demonstrably empty one is refused.** The
   build counts the checks in the function's own source, and refuses a body with
   no assert, no raise, nothing filling the list it returns and not so much as a
@@ -423,7 +443,8 @@ project. Four things about it are worth knowing before writing the second one:
   head — so a fix to one of them reaches every project instead of one.
 * **Dependencies come from the image and nowhere else.** Nothing is installed on
   a model's say-so, so `model.py` imports what the hub already has: `cadquery`,
-  `checklib`, the standard library, and whatever the project ships beside it.
+  `checklib`, `kicadboard` for a board of the project (below), the standard
+  library, and whatever the project ships beside it.
 
 ## Documents: boards, drawings and any other file
 
@@ -462,7 +483,8 @@ the same menu with no model behind it.
 **The extension decides only how a document is shown.** Markdown is drawn, and
 a link in it to another listed document opens that document on the page; a PDF,
 a picture, HTML and SVG are shown as they are; a CSV is drawn as a table, its
-first row the header, and any other text file — `.txt`, `.tsv`, `.json`, `.xml`,
+first row the header, split on whichever of comma, semicolon or tab that row
+holds most and read as windows-1251 when it is not UTF-8, and any other text file — `.txt`, `.tsv`, `.json`, `.xml`,
 `.yaml`, `.yml`, `.toml`, `.ini`, `.log` — as its text, in monospace;
 `.kicad_sch`, `.kicad_pcb`, `.glb` and `.zip` are the board, below. A file of
 any other extension — a supplier's STEP, a firmware image — is a plain file:
@@ -477,20 +499,29 @@ the file's name and size.
 and the board's 3D model whose paths differ only by the extension are one
 design. The schematic is listed by its root sheet and brings every sheet it
 names, either of the two brings the `.kicad_pro` beside it, and the `.glb` is
-made on the laptop with
-`kicad-cli pcb export glb`, not on the hub. The views are linked: a part clicked
-in one is selected in the others. A right click on a part, a pad or a net in any
+listed but not committed: the hub exports it from the board of its name on
+every push, so the 3D view never shows a board older than the commit. The
+schematic is one plane with every sheet laid out on it, the root first and the
+rest in KiCad's page order, each in its own title block. The views are linked: a
+part clicked in one is selected in the others. A right click on a part, a pad or a net in any
 view, and on the schematic a left click on a net too — a label, a power symbol,
 a sheet pin, a wire — opens one menu: a row for every place it can be shown —
 under `PART C507` the part in each view and its datasheet, under `NET +12V` every
 place of the net on every sheet and the net on the board.
 The menu opens on the row of what was clicked; the arrows ‹ › step from place to
-place and a click on a row goes there, switching the view or the sheet, and the menu
-stays open.
+place and a click on a row goes there, switching the view or moving to the sheet,
+and the menu stays open.
 A part has a datasheet when its `Datasheet` field names a PDF the project lists
 (`${KIPRJMOD}/ds/tpa3250.pdf`, hidden above): its row opens the PDF in a window
 over the design. The board view has its own panel of layers and lights the whole
-net of a clicked track or pad; the 3D view turns like the model does.
+net of a clicked track or pad; the 3D view turns like the model does, draws the
+copper from the `.kicad_pcb` with its nets, isolates a net and pulls the layers
+of the stackup apart. Measure works on both: between pads, vias, track ends and
+the board's edge on the board, between snapping points on its 3D model. Every
+schematic also brings its BOM, a table of its parts with their datasheets and,
+for a part whose symbol has a `Price` field, the price and the sum; its Assembly
+button draws the board's top and bottom over the table, lights the parts of the
+row picked and keeps Sourced and Placed ticks in the browser.
 
 ![The board with its layer panel, a net lit and the menu of a pad: the part in every view, its datasheet, the net's places and the net on the board](docs/images/kicad-board.png)
 
@@ -508,11 +539,20 @@ a zip of stand logs stays a plain file.
 
 ![The Gerbers of the same board, seen from the top](docs/images/gerbers.png)
 
+**A board of the project goes into the model through `import kicadboard`.**
+`kicadboard.load("hw/main.kicad_pcb")` hands `model.py` the board as the hub's
+KiCad has just exported it: `records()` gives the laminate as a solid the
+overlap gate sees, the mask, copper, silkscreen and fitted parts as meshes no
+gate sees, and `footprints` every footprint's place, side and pads, which is
+where an enclosure takes its bosses and windows from. A commit that changes the
+board rebuilds the model with the new board in it; nothing is exported by hand.
+
 **A wrong list refuses the push, whole.** A path that is not a file, a path
 listed twice, a file that would overwrite what the model's build wrote, a DXF
-the hub cannot draw, a missing sheet or one outside the project — each is a 422
-naming the entry, and nothing is skipped in silence. The complete rules, with
-the `kicad-cli` lines for the 3D model and the Gerbers, are written for the
+the hub cannot draw, a missing sheet or one outside the project, a `.glb`
+committed beside a board of its name — each is a 422 naming the entry, and
+nothing is skipped in silence. The complete rules, with the `kicad-cli` lines
+for the Gerbers and the frame `kicadboard` places a board in, are written for the
 agent that lays a project out: `skill/references/documents.md` and
 `skill/references/boards.md`.
 
@@ -529,13 +569,23 @@ page templates, the viewer payload, the starter template and the client's own
 sources: the one-file zipapp behind `/start/hammerola` is assembled out of those
 when the request arrives.
 
-CI builds and publishes it — `.gitea/workflows/image-check-publish.yml`, on every
-push:
+**KiCad is the one exception, and it is optional.** It is 7.5 GB, so it runs
+beside the hub as an image of its own, `hammerola-kicad` (`kicadsvc/`: the
+official `kicad/kicad` image and a small HTTP server in front of its
+`kicad-cli`), which the hub reaches at `KICAD_URL`. It exports the boards a
+model places and the `.glb` documents the hub makes. Without `KICAD_URL` the
+hub starts and works as before: only a model that loads a board fails, and a
+listed `.glb` is published as committed, or refuses the push when the tree
+lacks it.
+
+CI builds and publishes both — `.gitea/workflows/image-check-publish.yml`, on
+every push, the KiCad image under the same tags as the hub's:
 
 ```
 gitea.vvzvlad.xyz/projects/hammerola:latest     # main, what a deploy pulls
 gitea.vvzvlad.xyz/projects/hammerola:<sha>      # main, the rollback point
 gitea.vvzvlad.xyz/projects/hammerola:<branch>   # anything else
+gitea.vvzvlad.xyz/projects/hammerola-kicad:…    # the same three
 ```
 
 `:latest` is pushed LAST of the two, so it moving is the commit of the whole
@@ -551,8 +601,9 @@ Between the build and the push sits a gate,
 cannot, because the suite runs against a checkout and never looks at the
 artefact: that the entrypoint drops privileges for real, that the
 missing-variable guard fires and names the variable, that `.dockerignore` kept
-the tests and the `.env` out, that the CAD kernel imports, and that `/start`
-really answers. Nothing reaches the registry until it is green, which is also
+the tests and the `.env` out, that the CAD kernel imports, that `/start`
+really answers, and that the git server and the hook that decides a push are
+there. Nothing reaches the registry until it is green, which is also
 why `docker login` runs *after* it and never before.
 
 Locally the same image is a plain build with no arguments — but expect it to be
@@ -566,9 +617,10 @@ docker build -t hammerola .
 ```
 
 **Deploying is `docker-compose.yml` in this repository** — a template with
-placeholder values that pulls `gitea.vvzvlad.xyz/projects/hammerola:latest`. Do
-not build on the host that serves it. Four things in it are load-bearing rather
-than decorative, and each one is spelled out at length in the file itself:
+placeholder values that pulls `gitea.vvzvlad.xyz/projects/hammerola:latest` and
+the KiCad image beside it. Do not build on the host that serves it. Five things
+in it are load-bearing rather than decorative, and each one is spelled out at
+length in the file itself:
 
 * **One volume at `/app/data`.** Every build, pointer, repository, comment and
   job lives there; nothing ages out, so it grows monotonically and is cleared by
@@ -576,9 +628,13 @@ than decorative, and each one is spelled out at length in the file itself:
   getting it wrong does not fail, it silently starts the service from a fresh
   empty one with all the state still sitting in the volume nothing references.
 * **One secret, `EDIT_TOKEN`.** It is what publishing, the repositories, the log, the
-  comment queue, renaming and removing all check; everything else has a default
-  in `src/settings.py`. Without it the service refuses to start and says which
-  variable is missing, rather than coming up half-configured.
+  comment queue, renaming and removing all check; everything else is optional
+  or has a default in `src/settings.py`. Without it the service refuses to
+  start and says which variable is missing, rather than coming up
+  half-configured.
+* **The KiCad service on a network of its own.** It has no authentication, so
+  it sits on an `internal` network that only the hub shares, and the reverse
+  proxy reaches the hub on the other one.
 * **Non-root, by the entrypoint and not by the Dockerfile.** It starts as root,
   fixes ownership of the volume and drops to `app` (uid 1000) with gosu. Nothing
   declares a `USER`, so removing the entrypoint silently gives the service root
@@ -596,15 +652,21 @@ Everything routine is wrapped in the `Makefile` (`make help` lists all targets):
 
 ```bash
 make install                # create .venv + install dev/test deps
-cp .env.example .env        # fill in the values
+make env                    # create .env from .env.example, then fill in the values
 make test                   # run tests
 make run                    # run the app
+HUB_URL=https://<hub> make proxy   # the hub's projects with this checkout's browser files
 ```
+
+`make proxy` is how a change to the page is checked without a deploy: after
+`make ui` it serves a real hub's projects on `127.0.0.1:8794` with the browser
+files of this checkout, so the change is seen on real models and boards.
 
 Python targets create and reuse a local `.venv` automatically — you never need
 the system Python. node is needed by the frontend targets only: `make ui`,
-which builds the browser bundle, and `make ui-test`, which runs the JS suite.
-Both refuse to run without npm. `make test` does not refuse — it runs the
+which builds the browser bundle, `make viewer` and `make ecad`, which build our
+forks of the two viewers, `make proxy`, and `make ui-test`, which runs the JS
+suite. They refuse to run without npm. `make test` does not refuse — it runs the
 Python suite either way and then says out loud that it skipped the browser
 half. What `make run` cannot give you is the CAD kernel unless the machine
 happens to have it: a workstation without it serves every page and refuses every
@@ -620,4 +682,4 @@ build, which is the one thing the image is there for.
 | `docs/SPEC.md` | The requirements, the facts that were verified the hard way, and the work plan. |
 | `ui/README.md` | The browser interface: its layout, its pins, and why it is built twice. |
 | `docs/ui-brief.md` | What the interface is FOR: the reading the panels are built around, and the vocabulary they use. |
-| `docs/viewer-api.md` | The vendored `three-cad-viewer`: what of it is a public API, and what the viewport reaches into at its own risk. |
+| `docs/viewer-api.md` | `three-cad-viewer`, forked into `viewer/`: what of it is a public API, and what the viewport reaches into at its own risk. |
