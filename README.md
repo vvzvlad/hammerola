@@ -101,7 +101,7 @@ has it can download a listed KiCad design whole and edit it. The repository a
 revision was built from is on the hub too, but behind the secret, and so is the
 list of what exists on the hub at all.
 
-![The same revision as it goes on the bed, and what it hands out](docs/images/print-view.png)
+![The same revision as it goes on the bed: the plate's row hands out its 3MF, the part's menu its STEP, STL and 3MF](docs/images/print-view.png)
 
 ## Publishing a model
 
