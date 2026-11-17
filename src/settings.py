@@ -2,6 +2,7 @@ from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config_errors import load_settings_or_exit
+from src.mirror import parse_credentials
 
 
 class Settings(BaseSettings):
@@ -9,7 +10,8 @@ class Settings(BaseSettings):
     # environment, Settings() fails at startup. Presented as
     # `X-Hammerola-Token: <token>`, it means "may change things here":
     # publish, read a build's sources and log, rename or remove a project, read
-    # and resolve the comment queue, leave a comment. There is no second key.
+    # and resolve the comment queue, leave a comment. There is no second key to
+    # come in with; MIRROR_CREDENTIALS below is only for going out.
     #
     # Named for what it permits: a name like PUBLISH_TOKEN reads like a CI push
     # credential and invites handing it to a shared CI (SPEC 8A.1). It is one
@@ -31,6 +33,22 @@ class Settings(BaseSettings):
         # `KICAD_URL: ""` in a stack means no service as well, so builds and
         # documents read one "none" instead of an empty address.
         return value or None
+
+    # The tokens of the forges that hold the projects' backup copies
+    # (src/mirror.py): one entry per forge, `https://<login>:<token>@<host[:port]>`
+    # as git-credentials writes it, separated by spaces or line breaks. A second
+    # secret, but only for going OUT: changing anything on the hub still takes
+    # EDIT_TOKEN alone. Optional: without it the hub sends no copies and ignores
+    # the `mirror` key of project.json.
+    mirror_credentials: str | None = None
+
+    @field_validator("mirror_credentials")
+    @classmethod
+    def _check_mirror_credentials(cls, value):
+        if not value or not value.strip():
+            return None
+        parse_credentials(value)
+        return value
 
     # Listening socket. No default host/port would be hostile: neither depends on
     # the deployment — Traefik reaches the container on the compose network.

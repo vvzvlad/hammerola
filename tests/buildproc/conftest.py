@@ -133,21 +133,25 @@ def project(tmp_path):
 
 @pytest.fixture
 def hub_secrets(monkeypatch):
-    """Put the hub's real credentials into the PARENT's environment.
+    """Put the hub's real secrets into the PARENT's environment.
 
-    The names are the ones src/settings.py declares, and the values are
+    The names are the ones src/settings.py declares: the one secret to get in
+    and the forge tokens that only go out, and the values are
     distinctive so a test can look for the VALUE anywhere in a log rather than
     only for the name. Without this fixture the suite would be asserting the
     absence of variables that were never there -- which passes against any
     implementation, including one that inherits `os.environ` whole.
     """
     secrets = {
-        # The one credential src/settings.py declares.
+        # The one secret to get in.
         "EDIT_TOKEN": "edit-token-must-not-leak-4a1f",
+        # The forge tokens, which only go out: src/settings.py declares them too.
+        "MIRROR_CREDENTIALS":
+            "https://u:mirror-token-must-not-leak-9b2e@forge.example",
         # Not ours, and that is the point: a filter is a list of names somebody
         # maintains, and this is the variable nobody thought to add to it. It
-        # matters MORE now that the hub declares a single secret — with two, a
-        # filter that named both looked complete; with one, it looks trivial.
+        # matters MORE for a short list: a filter that named every secret looks
+        # complete, and the next secret added to the hub is the one it lacks.
         "AWS_SECRET_ACCESS_KEY": "decoy-must-not-leak-c7d3",
     }
     for name, value in secrets.items():

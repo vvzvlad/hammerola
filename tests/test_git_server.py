@@ -208,7 +208,7 @@ def test_a_client_gone_mid_answer_does_not_stop_the_backend(
     monkeypatch.setattr(githttp.subprocess, "Popen", spawn)
     ended = threading.Event()
     monkeypatch.setattr(githttp, "end_of_request",
-                        lambda store, request: ended.set())
+                        lambda store, request, mirror: ended.set())
     said = []
     sink = logger.add(said.append, level="DEBUG")
     try:

@@ -60,7 +60,7 @@ services:
     # an `env_file:` with an absolute host path: Portainer runs compose inside its own
     # container, so that path resolves in the Portainer server's filesystem, not on the host.
     environment:
-      # The only secret, one for the whole system. Replace XXX before deploying. It is the
+      # The only secret to get in, one for the whole system. Replace XXX before deploying. It is the
       # `X-Hammerola-Token` value on every route that changes something or reads something
       # private (publishing, a build's sources and log, renaming or removing a project, the
       # comment queue). The public pages have no read-side auth. The same value goes to
@@ -70,6 +70,9 @@ services:
       # exports the boards builds place and the `.glb` documents the hub makes; without it
       # only a model that loads a board, or a listed `.glb` the tree does not hold, fails.
       KICAD_URL: http://kicad:8080
+      # Tokens of the forges that hold the projects' backup copies, one `https://<login>:<token>@<host>`
+      # per forge, separated by spaces. Optional: without it the hub sends no copies.
+      # MIRROR_CREDENTIALS: XXX
       # Everything below has a default in src/settings.py and is spelled out here
       # only where a different value is wanted. DATA_DIR must match the mount
       # point of the volume declared above.

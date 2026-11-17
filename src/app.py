@@ -202,6 +202,7 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       SNAPSHOT_NAME, STATE_FAILED, STOPPED_ERROR,
                       SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL, BuildQueue,
                       CompareTask, InspectTask, JobStore)
+from src.mirror import Mirror, parse_credentials
 from src.multipart import MultipartError, parse_multipart
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, LATEST_LINK,
                        MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
@@ -1528,7 +1529,8 @@ class HubHandler(BaseHTTPRequestHandler):
         try:
             accepted = prereceive.run(self.server.store, self.server.jobs,
                                       self.server.builds,
-                                      self.server.comment_store, request, say)
+                                      self.server.comment_store,
+                                      self.server.mirror, request, say)
         except Exception:
             logger.exception(f"push {request.pid}: the hook could not be "
                              f"answered")
@@ -1858,7 +1860,7 @@ class HubHandler(BaseHTTPRequestHandler):
             return self._error(500, "internal error", close)
         if code != 0:
             logger.warning(f"git {request.pid}: git http-backend exited {code}")
-        githttp.end_of_request(self.server.store, request)
+        githttp.end_of_request(self.server.store, request, self.server.mirror)
         return None
 
     # -- the project itself: rename, and remove ---------------------
@@ -1946,6 +1948,7 @@ class HubHandler(BaseHTTPRequestHandler):
             item, name)
         if status != 200:
             return self._error(status, answer)
+        self.server.mirror.schedule(pid)
         return self._json(200, answer)
 
     def do_DELETE(self):
@@ -2274,6 +2277,9 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
                         compare_runner=compare_runner,
                         inspect_runner=inspect_runner, **extra)
 
+    # Its thread starts with the first copy, so a bind that fails leaves none.
+    mirror = Mirror(parse_credentials(settings.mirror_credentials or ""), store)
+
     class Server(ThreadingHTTPServer):
         # Threads die with the process: a hung 2 MB download must never keep the
         # container alive after a stop signal.
@@ -2282,13 +2288,15 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
 
         def server_close(self):
             # One call stops the socket and the workers. A worker mid-build is
-            # waited for, so a build is never half-published.
+            # waited for, so a build is never half-published; a copy being
+            # sent is killed (`Mirror.close`), outside that wait.
             #
             # The socket closes first so it stops LISTENING: otherwise the
             # kernel keeps completing handshakes into the backlog during the
             # stop, and those clients wait for an answer nobody writes.
             super().server_close()
             builds.shutdown()
+            mirror.close()
 
     server = Server((settings.host, settings.port), HubHandler)
     server.settings = settings
@@ -2297,6 +2305,7 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     server.proposal_store = proposal_store
     server.jobs = job_store
     server.builds = builds
+    server.mirror = mirror
     server.edit_token = settings.edit_token
     # What the pre-receive hook presents (`_handle_pre_receive`): 128 bits, made
     # here and handed to git's environment only.

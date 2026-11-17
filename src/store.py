@@ -475,6 +475,9 @@ class Store:
         # push (`queue_variant_removal`). Under `_locks_guard`: the hook's
         # answer and the git request run on different threads.
         self._removals: dict[str, dict[str, str]] = {}
+        # The projects whose branches an accepted push has moved, queued the
+        # same way and taken at the end of the same push (`queue_mirror`).
+        self._mirrors: set[str] = set()
         # The root index spans every project, so it gets its own global lock.
         self._index_lock = threading.Lock()
         self.projects_dir.mkdir(parents=True, exist_ok=True)
@@ -2074,6 +2077,20 @@ class Store:
         """`{variant: tip}` queued for `pid`, the queue left empty."""
         with self._locks_guard:
             return self._removals.pop(pid, {})
+
+    def queue_mirror(self, pid: str) -> None:
+        """Remember that the push now answered moves a branch of `pid`: its
+        copy is sent at the end of the same request
+        (`githttp.end_of_request`, `Mirror.schedule`)."""
+        with self._locks_guard:
+            self._mirrors.add(pid)
+
+    def take_mirror(self, pid: str) -> bool:
+        """Whether `queue_mirror` was called for `pid`, the flag cleared."""
+        with self._locks_guard:
+            was = pid in self._mirrors
+            self._mirrors.discard(pid)
+            return was
 
     def remove_variant(self, pid: str, variant: str, tip: str) -> int | None:
         """Delete one variant whose branch a push has deleted. -> how many
