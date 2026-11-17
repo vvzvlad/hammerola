@@ -112,6 +112,18 @@
   git request, under a lock of its own; swept of ref locks, push quarantine and
   unrenamed staging at startup with no age threshold (`_sweep_repos`); removed
   with the project
+- `src/mirror.py` — the backup copy of each project's code in a third-party
+  git forge: `Mirror`, one background thread that sends the queued projects
+  one by one with a `git push` of every branch, without `--force`, from the
+  project's bare repository to the address in `project.json` on `main`
+  (`mirror` key). `schedule` is called at the end of a push that moved a
+  branch (`githttp.end_of_request`, the flag raised by the pre-receive answer,
+  `Store.queue_mirror`) and after a name committed from the page. The forge's
+  token (`MIRROR_CREDENTIALS`, `parse_credentials`) goes only into the
+  environment of that one `git push`, as an `extraHeader` for the address's
+  host; the process runs in a group of its own so a deadline kills git's https
+  helper with it. A failure is kept in memory and printed first by the project's
+  next push (`prereceive.run`)
 - `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
   without building — a deleted `main` or draft (any other deleted branch is

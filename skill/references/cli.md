@@ -30,6 +30,14 @@ built from it, so a new id is a new project orphaning the old.
 edit the line, and only later builds carry it. A name changed on the hub's
 page arrives as the hub's commit to `project.json` (`SKILL.md`, variants).
 
+`mirror` is the optional address of a backup copy of the project's code: the
+https address of a repository the owner made empty beforehand in any git forge,
+a different one for every project, and read from `project.json` on `main`
+(`"mirror": "https://forge.example/owner/repo.git"`). The hub pushes every
+branch there on its own, in the background, after a push or a rename; nothing
+for you to run. A line `copy: … failed …` at the top of a push's output is about
+that copy, not about the publication: the revision is published all the same.
+
 Then, once per project, in its git repository:
 
 ```sh

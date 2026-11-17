@@ -627,7 +627,7 @@ length in the file itself:
   hand. The volume's real name is `<stack>_<key>`, composed at deploy time —
   getting it wrong does not fail, it silently starts the service from a fresh
   empty one with all the state still sitting in the volume nothing references.
-* **One secret, `EDIT_TOKEN`.** It is what publishing, the repositories, the log, the
+* **One secret to get in, `EDIT_TOKEN`.** It is what publishing, the repositories, the log, the
   comment queue, renaming and removing all check; everything else is optional
   or has a default in `src/settings.py`. Without it the service refuses to
   start and says which variable is missing, rather than coming up
