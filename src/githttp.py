@@ -316,7 +316,7 @@ def serve(handler, request: GitRequest, repos: Path, length,
     return code
 
 
-def end_of_request(store: Store, request: GitRequest) -> None:
+def end_of_request(store: Store, request: GitRequest, mirror) -> None:
     """Runs once `git http-backend` has exited, before the connection closes.
 
     The git client returns when the connection closes, so whatever is done here
@@ -327,14 +327,20 @@ def end_of_request(store: Store, request: GitRequest) -> None:
     /api/v1/projects/<pid>/names`, `prereceive.commit_name`), which
     recomputes the same way. Before that, each variant whose branch the push
     deleted is removed (`Store.remove_variant`): here, once git is done, and
-    not in the hook's answer, which comes before git moves the ref.
+    not in the hook's answer, which comes before git moves the ref. Last, the
+    project's copy is queued (`Mirror.schedule`) when the hook said a branch
+    moved, with the variants removed: only those, since a branch git did not
+    delete is still there and deleting it in the copy would erase it.
     """
     if request.path_info.endswith(f"/{RECEIVE_PACK}"):
+        removed = []
         try:
             removals = store.take_variant_removals(request.pid)
             for variant, tip in sorted(removals.items()):
                 try:
-                    store.remove_variant(request.pid, variant, tip)
+                    if store.remove_variant(request.pid, variant,
+                                            tip) is not None:
+                        removed.append(variant)
                 except Exception:
                     logger.exception(f"git {request.pid}: the variant "
                                      f"{variant} could not be removed after "
@@ -343,3 +349,5 @@ def end_of_request(store: Store, request: GitRequest) -> None:
         except Exception:
             logger.exception(f"git {request.pid}: the project could not be "
                              f"brought up to date after the push")
+        if store.take_mirror(request.pid):
+            mirror.schedule(request.pid, removed)

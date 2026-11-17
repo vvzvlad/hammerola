@@ -403,13 +403,13 @@ def test_the_model_cannot_read_the_hubs_token(project, hub_secrets):
     """
     outcome = project.build("""
         import os
-        raise RuntimeError("token=%r decoy=%r" % (
-            os.environ.get("EDIT_TOKEN"),
+        raise RuntimeError("token=%r mirror=%r decoy=%r" % (
+            os.environ.get("EDIT_TOKEN"), os.environ.get("MIRROR_CREDENTIALS"),
             os.environ.get("AWS_SECRET_ACCESS_KEY")))
     """)
 
     assert outcome.status == STATUS_FAILED
-    assert "token=None decoy=None" in outcome.log
+    assert "token=None mirror=None decoy=None" in outcome.log
     for value in hub_secrets.values():
         assert value not in outcome.log
 

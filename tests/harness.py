@@ -79,6 +79,8 @@ def settings_for(data_dir, **overrides):
         # No KiCad service, as a hub without KICAD_URL; a test of a board's
         # exports passes its stub's.
         kicad_url=None,
+        # No forge tokens, as a hub without MIRROR_CREDENTIALS: no copies.
+        mirror_credentials=None,
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),

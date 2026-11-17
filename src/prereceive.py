@@ -213,17 +213,21 @@ def parse(body: bytes, store: Store) -> HookRequest:
     return HookRequest(pid, tuple(updates), dict(quarantine), tuple(options))
 
 
-def run(store: Store, jobs, builds, comments, request: HookRequest,
+def run(store: Store, jobs, builds, comments, mirror, request: HookRequest,
         say) -> bool:
     """Answer one push, line by line through `say`. -> whether it may go in.
 
     `comments` is the hub's comment queue (`src.comments.CommentStore`), read
-    for `_comments_note`. The verdict line is the caller's to write. Every
-    refusal is one phrase to the pusher and the line `push <pid> <ref>:
-    refused: <why>` in the log.
+    for `_comments_note`; `mirror` is the hub's `Mirror`, asked for the failure
+    of the project's last copy, which is the first line. The verdict line is
+    the caller's to write. Every refusal is one phrase to the pusher and the
+    line `push <pid> <ref>: refused: <why>` in the log.
     """
     repo = store.repo_dir(request.pid)
     env = request.quarantine
+    failure = mirror.last_failure(request.pid)
+    if failure:
+        say(f"copy: {failure}")
     try:
         plans = [plan for old, new, ref in request.updates
                  if (plan := _look(store, repo, request.pid, env, old, new, ref))]
@@ -260,6 +264,9 @@ def run(store: Store, jobs, builds, comments, request: HookRequest,
                 f"other variant has")
             store.queue_variant_removal(request.pid, plan.variant,
                                         tips[plan.ref])
+    # A draft is not copied; a branch, deleted or moved, is.
+    if any(not plan.draft for plan in plans):
+        store.queue_mirror(request.pid)
     return True
 
 
