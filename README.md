@@ -257,9 +257,9 @@ hammerola skill update           # write the hub's copy over it
 hammerola update                 # replace THIS TOOL with the hub's copy
 ```
 
-A title with a prefix before a `/` — `wb/meter` — puts the project into the
-folder `wb` on the hub's front page, so `rename` moves a project into a folder
-and out of it, with no push.
+Every `/` in a title is a folder boundary on the hub's front page: `wb/meter` is
+in the folder `wb`, `wb/meters/main` in `meters` inside `wb`, so `rename` moves a
+project into a folder and out of it, with no push.
 
 `skill` and `update` are the odd ones out: they ask about this MACHINE rather
 than about a project. `skill` exists because the skill is the only thing here
