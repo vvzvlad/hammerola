@@ -159,6 +159,13 @@ describe('every view the hub will remember', () => {
         .toEqual(['/?folder=att', '/?folder=wb'])
       expect(drawn.map((el) => el.key).slice(2), `the ${id} body`).toEqual(ROWS.map((row) => row.pid))
     }
+    // A folder inside an open one links its whole path, not its name.
+    const nested = arrange([{ ...ROWS[0], title: 'wb/Модули/Adapter' }, { ...ROWS[1], title: 'wb/Bracket' }],
+      'wb', 'name').folders
+    for (const id of PROJECT_VIEWS) {
+      expect(links(VIEW_BODIES[id](withFolders, [], nested)).map((el) => el.props.href), `the ${id} body`)
+        .toEqual([`/?folder=${encodeURIComponent('wb/Модули')}`])
+    }
   })
 
   it('has an icon path to draw on its tab', () => {

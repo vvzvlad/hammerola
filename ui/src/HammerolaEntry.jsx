@@ -15,10 +15,10 @@
  *                 more variants (branches) says `N variants` (`index_card`).
  *   createdAt  -> the OLDEST build the hub still holds, labelled "first built"
  *                 (render.index_card).
- *   folder     -> nothing the hub keeps: the title's text before its first `/`
- *                 (`folderOf`). The list draws a folder as one card of its
- *                 projects, and the address names the folder open
- *                 (`?folder=`, address.js).
+ *   folder     -> nothing the hub keeps: the title's parts before its last `/`,
+ *                 each `/` one level down (`folderOf`). The list draws a folder
+ *                 as one card of the projects in it and below it, and the
+ *                 address names the folder open (`?folder=`, address.js).
  *   login      -> the same `EDIT_TOKEN` and storage functions as the build page
  *                 (store.js); the field says that name because it is what
  *                 `hammerola login` asks for.
@@ -691,52 +691,63 @@ export const RevLine = ({ p }) => {
 
 /**
  * The folder a project's title puts it in, and its name there; null for a
- * project outside any. The folder is the text before the first `/`, when it is
- * a word — not empty, no whitespace — and a name follows it: `wb/meter` is
- * `meter` in `wb`, while `Модуль WB-MGE / WB-MGU (wb-mge-mgu)` is a title with
- * a slash in it. One level: `a/b/c` is `b/c` in `a`.
+ * project outside any. Every `/` divides the title, each one a level down, and
+ * the last part is the name: `wb/meter` is `meter` in `wb`, `a/b/c` is `c` in
+ * `b` in `a`, `Модуль WB-MGE / WB-MGU` is `WB-MGU` in `Модуль WB-MGE`. Each
+ * part is trimmed and an empty one dropped (`a//b`, `/meter`), so a title left
+ * with one part is in no folder. `folder` is the path, its parts joined by `/`.
  */
 export function folderOf(title) {
-  const cut = title.indexOf('/');
-  if (cut < 1) return null;
-  const folder = title.slice(0, cut);
-  const name = title.slice(cut + 1).trim();
-  return /\s/.test(folder) || !name ? null : { folder, name };
+  const parts = title.split('/').map((part) => part.trim()).filter(Boolean);
+  if (parts.length < 2) return null;
+  return { folder: parts.slice(0, -1).join('/'), name: parts[parts.length - 1] };
 }
 
 /**
  * The list with folder `folder` open, out of `projects` in the order of sort
- * `sort` (`sorted`): `folder` is the one open, null at the root; `folders` are
- * drawn before the `rows`, each row a project's card.
+ * `sort` (`sorted`): `folder` is the path of the one open, null at the root;
+ * `folders` are drawn before the `rows`, each row a project's card.
  *
- * At the root the rows are the projects in no folder; inside one they are its
- * projects, named without it. Rows keep their order in `projects`. A folder is
- * shaped as a row for the sort's comparator — `title` its name, `built` and
- * `first` the newest of its projects' — and carries its `projects`, named
- * without it, in their order. A folder no project is in (an old link, or its
- * last project removed) is the root.
+ * The rows are the projects right in the open folder — at the root, those in
+ * no folder — named without it there. Each folder one level below it is drawn
+ * as a card of every project in it and below it. Rows, and a folder's
+ * projects, are sorted again by the names they are drawn with: `wb/Alpha` and
+ * `wb / Zeta` are in one folder, but their whole titles sort Zeta first. A
+ * folder is shaped as a row for the sort's comparator — `title`
+ * its name, `built` and `first` the newest of its projects' — and carries its
+ * `path` and its `projects`, each named by its last part, in their order. A
+ * folder no project is in or below (an old link, or its last project removed)
+ * is the root.
  */
 export function arrange(projects, folder, sort) {
+  const placed = projects.map((p) => [p, folderOf(p.title)]);
+  const open = folder && placed.some(([, at]) => at && `${at.folder}/`.startsWith(`${folder}/`)) ? folder : null;
+  const prefix = open ? `${open}/` : '';
   const groups = new Map();
-  const loose = [];
-  projects.forEach((p) => {
-    const at = folderOf(p.title);
-    if (!at) {
-      loose.push(p);
-      return;
+  const rows = [];
+  placed.forEach(([p, at]) => {
+    const path = at ? at.folder : null;
+    if (path === open) {
+      rows.push(at ? { ...p, title: at.name } : p);
+    } else if (path !== null && path.startsWith(prefix)) {
+      // Below the open folder: the next part of its path is the card drawn here.
+      const sub = path.slice(prefix.length).split('/')[0];
+      if (!groups.has(sub)) groups.set(sub, []);
+      groups.get(sub).push({ ...p, title: at.name });
     }
-    if (!groups.has(at.folder)) groups.set(at.folder, []);
-    groups.get(at.folder).push({ ...p, title: at.name });
   });
-  if (groups.has(folder)) return { folder, folders: [], rows: groups.get(folder) };
-  const newest = (rows, field) => rows.map((p) => p[field]).reduce((a, b) => (ts(b) > ts(a) ? b : a));
-  const folders = [...groups].map(([title, rows]) => ({
-    title, projects: rows, built: newest(rows, 'built'), first: newest(rows, 'first'),
+  const newest = (inside, field) => inside.map((p) => p[field]).reduce((a, b) => (ts(b) > ts(a) ? b : a));
+  const folders = [...groups].map(([title, inside]) => ({
+    title,
+    path: `${prefix}${title}`,
+    projects: inside.sort(SORT_CMP[sort]),
+    built: newest(inside, 'built'),
+    first: newest(inside, 'first'),
   }));
-  return { folder: null, folders: folders.sort(SORT_CMP[sort]), rows: loose };
+  return { folder: open, folders: folders.sort(SORT_CMP[sort]), rows: rows.sort(SORT_CMP[sort]) };
 }
 
-/** A folder's key among the cards, for React and the hover: its name and a
+/** A folder's key among the cards, for React and the hover: its path and a
  *  slash, which no project id holds (`SAFE_ID` in src/store.py). */
 const folderKey = (name) => `${name}/`;
 
@@ -782,10 +793,10 @@ export const VIEW_BODIES = Object.freeze({
     <div style={css('display:grid;grid-template-columns:repeat(auto-fill,minmax(min(320px,100%),1fr));gap:16px')}>
       {folders.map((f) => (
         <a
-          key={folderKey(f.title)}
-          {...page.folderLink(f.title)}
-          {...page.hover(folderKey(f.title))}
-          style={css(`${page.cardStyle(folderKey(f.title))}overflow:hidden;display:flex;flex-direction:column`)}
+          key={folderKey(f.path)}
+          {...page.folderLink(f.path)}
+          {...page.hover(folderKey(f.path))}
+          style={css(`${page.cardStyle(folderKey(f.path))}overflow:hidden;display:flex;flex-direction:column`)}
         >
           <div style={css('position:relative;height:190px;flex:none')}>
             <Mosaic rows={f.projects} />
@@ -846,10 +857,10 @@ export const VIEW_BODIES = Object.freeze({
           a project's row the time would stand alone at the far right. */}
       {folders.map((f) => (
         <a
-          key={folderKey(f.title)}
-          {...page.folderLink(f.title)}
-          {...page.hover(folderKey(f.title))}
-          style={css(`${page.cardStyle(folderKey(f.title))}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
+          key={folderKey(f.path)}
+          {...page.folderLink(f.path)}
+          {...page.hover(folderKey(f.path))}
+          style={css(`${page.cardStyle(folderKey(f.path))}display:flex;align-items:center;gap:12px;padding:8px 12px 8px 8px`)}
         >
           <div style={css('position:relative;width:96px;height:60px;flex:none;border-radius:6px;overflow:hidden')}>
             <Mosaic rows={f.projects} />
@@ -1281,19 +1292,30 @@ export class HammerolaProjects extends React.Component {
             <span style={css(WORDMARK)}>hammerola</span>
           </div>
           <div style={css(HEADER_RULE)} />
+          {/* The trail to the open folder: the root and each folder above it
+              are links, the open one is not. */}
           {folder ? (
             <span style={css(TIGHT_ROW)}>
               <a {...this.folderLink(null)} style={css(`font:600 13px ${SANS};color:var(--text-soft);text-decoration:none`)}>Projects</a>
-              <span style={css(`font:400 13px ${SANS};color:var(--text-faint)`)}>/</span>
-              <span style={css(`font:600 13px ${SANS};color:var(--text);${ELLIPSIS}`)}>{folder}</span>
+              {folder.split('/').map((part, i, parts) => (
+                <React.Fragment key={parts.slice(0, i + 1).join('/')}>
+                  <span style={css(`font:400 13px ${SANS};color:var(--text-faint)`)}>/</span>
+                  {i < parts.length - 1 ? (
+                    <a {...this.folderLink(parts.slice(0, i + 1).join('/'))} style={css(`font:600 13px ${SANS};color:var(--text-soft);text-decoration:none;${ELLIPSIS}`)}>{part}</a>
+                  ) : (
+                    <span style={css(`font:600 13px ${SANS};color:var(--text);${ELLIPSIS}`)}>{part}</span>
+                  )}
+                </React.Fragment>
+              ))}
             </span>
           ) : (
             <span style={css(`font:600 13px ${SANS};color:var(--text-soft)`)}>Projects</span>
           )}
           <span style={css(FILL)} />
-          {/* Every project on the hub at the root; inside a folder, its own. */}
+          {/* Every project in the open folder and below it; at the root, every
+              project on the hub. */}
           <span style={css(`font:400 11px ${MONO};color:var(--text-faint)`)}>
-            {projectCount(folder ? rows.length : this.props.projects.length)}
+            {projectCount(folders.reduce((n, f) => n + f.projects.length, rows.length))}
           </span>
           {/* Being here is being signed in, so this is the header's only
               control. */}

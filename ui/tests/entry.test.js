@@ -64,7 +64,7 @@ import {
   writeProjectView, writeToken,
 } from '../src/store.js'
 import { guardSubscribers } from './addressguard.js'
-import { collect, texts, titles } from './eltree.js'
+import { collect, links, texts, titles } from './eltree.js'
 
 guardSubscribers()
 
@@ -337,18 +337,22 @@ describe('the order of the list', () => {
 // for a folder nobody is in.
 
 describe('the folder a title puts a project in', () => {
-  it('is the word before the first slash, with the rest as its name', () => {
+  it('is every part before the last slash, each a level down, with the last as its name', () => {
     expect(folderOf('wb/meter')).toEqual({ folder: 'wb', name: 'meter' })
     expect(folderOf('wb/Счётчик (meter)')).toEqual({ folder: 'wb', name: 'Счётчик (meter)' })
     expect(folderOf('стенд/плата')).toEqual({ folder: 'стенд', name: 'плата' })
-    expect(folderOf('wb/ meter ')).toEqual({ folder: 'wb', name: 'meter' })
-    // One level: the rest is the name, slashes and all.
-    expect(folderOf('a/b/c')).toEqual({ folder: 'a', name: 'b/c' })
+    expect(folderOf('a/b/c')).toEqual({ folder: 'a/b', name: 'c' })
   })
 
-  it('is none for a slash inside a title, or one with nothing on a side of it', () => {
-    // A title on a live hub: what stands before its slash is words, not a folder.
-    expect(folderOf('Модуль WB-MGE / WB-MGU (wb-mge-mgu)')).toBeNull()
+  it('takes words with spaces for a folder, and trims each part', () => {
+    expect(folderOf('Модуль WB-MGE / WB-MGU (wb-mge-mgu)'))
+      .toEqual({ folder: 'Модуль WB-MGE', name: 'WB-MGU (wb-mge-mgu)' })
+    expect(folderOf('непонятное и архивное/WB-MAP')).toEqual({ folder: 'непонятное и архивное', name: 'WB-MAP' })
+    expect(folderOf(' wb / Старые счётчики / meter ')).toEqual({ folder: 'wb/Старые счётчики', name: 'meter' })
+  })
+
+  it('drops an empty part, and is none for a title left with one', () => {
+    expect(folderOf('a//b')).toEqual({ folder: 'a', name: 'b' })
     expect(folderOf('Bracket')).toBeNull()
     expect(folderOf('/meter')).toBeNull()
     expect(folderOf('wb/')).toBeNull()
@@ -357,14 +361,14 @@ describe('the folder a title puts a project in', () => {
 })
 
 describe('the list with folders in it', () => {
-  // Three folders, in a different order under each sort, and two loose
-  // projects, one of them with a slash in its title.
+  // Three folders, in a different order under each sort, one of them with a
+  // folder inside, and one loose project.
   const SHELF = [
     { pid: 'm', title: 'wb/meter', built: '2026-08-05T00:00:00Z', first: '2026-01-01T00:00:00Z' },
     { pid: 'r', title: 'wb/Relay', built: '2026-08-01T00:00:00Z', first: '2026-06-01T00:00:00Z' },
     { pid: 'k', title: 'att/knob', built: '2026-08-03T00:00:00Z', first: '2026-07-01T00:00:00Z' },
     { pid: 'z', title: 'zz/zone', built: '2026-08-04T00:00:00Z', first: '2026-06-15T00:00:00Z' },
-    { pid: 'g', title: 'Модуль WB-MGE / WB-MGU (wb-mge-mgu)', built: '2026-08-06T00:00:00Z', first: '2026-02-01T00:00:00Z' },
+    { pid: 'g', title: 'wb / Модули / WB-MGE', built: '2026-08-06T00:00:00Z', first: '2026-02-01T00:00:00Z' },
     { pid: 'b', title: 'Bracket', built: '2026-08-02T00:00:00Z', first: '2026-03-01T00:00:00Z' },
   ]
 
@@ -376,18 +380,20 @@ describe('the list with folders in it', () => {
     return arrange(c.sorted(), folder, c.sort)
   }
   const pids = (rows) => rows.map((p) => p.pid)
+  afterEach(() => navigate(fresh('/', {})))
 
   it('keeps at the root only the projects in no folder', () => {
     const root = arranged(null, 'modified')
     expect(root.folder).toBeNull()
-    expect(pids(root.rows)).toEqual(['g', 'b'])
+    expect(pids(root.rows)).toEqual(['b'])
+    // A folder's card holds the projects of the folders inside it too.
     expect(root.folders.map((f) => [f.title, pids(f.projects)]))
-      .toEqual([['wb', ['m', 'r']], ['zz', ['z']], ['att', ['k']]])
+      .toEqual([['wb', ['g', 'm', 'r']], ['zz', ['z']], ['att', ['k']]])
   })
 
   it('orders the folders by the sort: name, newest build, newest first build', () => {
-    // A folder is as new as the newest of its projects: `wb` is `meter` under
-    // one sort and `Relay` under the other.
+    // A folder is as new as the newest of its projects: `wb` is `WB-MGE`, from
+    // the folder inside it, under one sort and `Relay` under the other.
     const order = (sort) => arranged(null, sort).folders.map((f) => f.title)
     expect(order('name')).toEqual(['att', 'wb', 'zz'])
     expect(order('modified')).toEqual(['wb', 'zz', 'att'])
@@ -396,24 +402,44 @@ describe('the list with folders in it', () => {
 
   it('keeps a folder\'s projects in the sort, which picks its pictures, and its newest build in any', () => {
     const wb = arranged(null, 'first').folders.find((f) => f.title === 'wb')
-    expect(pids(wb.projects)).toEqual(['r', 'm'])
-    expect(wb.built).toBe('2026-08-05T00:00:00Z')
+    expect(pids(wb.projects)).toEqual(['r', 'g', 'm'])
+    expect(wb.built).toBe('2026-08-06T00:00:00Z')
     expect(wb.first).toBe('2026-06-01T00:00:00Z')
   })
 
-  it('opens a folder as its projects alone, named without it', () => {
+  it('opens a folder as the folders inside it and its own projects, named without it', () => {
     expect(arranged('wb', 'name')).toEqual({
       folder: 'wb',
-      folders: [],
+      folders: [{
+        title: 'Модули', path: 'wb/Модули', projects: [{ ...SHELF[4], title: 'WB-MGE' }], built: SHELF[4].built, first: SHELF[4].first,
+      }],
       rows: [{ ...SHELF[0], title: 'meter' }, { ...SHELF[1], title: 'Relay' }],
     })
+    expect(arranged('wb/Модули', 'name'))
+      .toEqual({ folder: 'wb/Модули', folders: [], rows: [{ ...SHELF[4], title: 'WB-MGE' }] })
     // The page's own rows keep the whole title: the delete box names a project by it.
     expect(SHELF[0].title).toBe('wb/meter')
   })
 
+  it('sorts a folder by the names it draws, whatever the spacing around the slashes', () => {
+    // The order `sorted` hands over: by whole title, where `wb / Zeta` comes first.
+    const rows = [{ pid: 'z', title: 'wb / Zeta' }, { pid: 'a', title: 'wb/Alpha' }]
+    expect(arrange(rows, 'wb', 'name').rows.map((p) => p.title)).toEqual(['Alpha', 'Zeta'])
+  })
+
   it('draws the root for a folder no project is in', () => {
-    // A link to a folder emptied since, or its last project removed while it was open.
-    expect(arranged('gone', 'name')).toEqual(arranged(null, 'name'))
+    // A link to a folder emptied since, or its last project removed while it
+    // was open; `w` begins the path `wb` but is not a part of it.
+    for (const gone of ['gone', 'wb/gone', 'w']) expect(arranged(gone, 'name')).toEqual(arranged(null, 'name'))
+  })
+
+  it('links the root and each folder above the open one in the header, and counts what is below it', () => {
+    navigate(fresh('/', { folder: 'wb/Модули' }))
+    const header = list({ projects: SHELF }).render().props.children[1]
+    expect(links(header).map((el) => el.props.href)).toEqual(['/', '/?folder=wb'])
+    expect(texts(header)).toEqual(expect.arrayContaining(['Модули', '1 project']))
+    navigate(fresh('/', { folder: 'wb' }))
+    expect(texts(list({ projects: SHELF }).render().props.children[1])).toContain('3 projects')
   })
 })
 
