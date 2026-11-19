@@ -234,9 +234,10 @@ def skill_digest() -> str:
     the same one over the installed copy, with the same function, so any change
     to any file of the skill reads as a different skill on every laptop.
 
-    It covers the files `skill_members` packs, hidden ones aside, which
-    `skill_bytes` refuses to serve; a test holds the two together. Cached; the
-    files cannot change while the process runs.
+    It covers the files `skill_members` packs, hidden ones and `__pycache__`
+    aside: the first `skill_bytes` refuses to serve, the second the image never
+    carries (`.dockerignore`); a test holds the two together. Cached; the files
+    cannot change while the process runs.
     """
     return tree_digest(SKILL_DIR)
 

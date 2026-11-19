@@ -36,7 +36,7 @@ ROOT = Path(__file__).resolve().parents[1]
 _SPEC = importlib.util.spec_from_file_location(
     "skill_instructions", ROOT / "skill" / "scripts" / "instructions.py")
 instructions = importlib.util.module_from_spec(_SPEC)
-# no skill/scripts/__pycache__: the hub packs and digests every file under skill/
+# no skill/scripts/__pycache__: the hub packs every file under skill/ into the archive
 _bytecode, sys.dont_write_bytecode = sys.dont_write_bytecode, True
 _SPEC.loader.exec_module(instructions)
 sys.dont_write_bytecode = _bytecode

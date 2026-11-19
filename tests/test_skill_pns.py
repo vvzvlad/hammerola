@@ -173,7 +173,7 @@ def load(name, **modules):
     spec = importlib.util.spec_from_file_location("skill_" + name, SCRIPTS / (name + ".py"))
     module = importlib.util.module_from_spec(spec)
     saved = {k: sys.modules.get(k) for k in modules}
-    # no skill/scripts/__pycache__: the hub packs and digests every file under skill/
+    # no skill/scripts/__pycache__: the hub packs every file under skill/ into the archive
     bytecode, sys.dont_write_bytecode = sys.dont_write_bytecode, True
     sys.modules.update(modules)
     try:

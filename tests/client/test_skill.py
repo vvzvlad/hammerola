@@ -120,15 +120,20 @@ def test_a_skill_that_is_not_installed_is_reported_and_is_not_a_failure(
 
 def test_the_hubs_files_are_up_to_date_and_any_other_file_is_not(
         configured, installed, capsys):
-    """The digest covers every file, and hidden ones on neither side.
+    """The digest covers every file, and hidden ones or bytecode on neither side.
 
-    A `.DS_Store` Finder drops into the directory must not read as a change, or
-    every Mac would be told to update forever; an edited reference must, since
-    that is the change the digest exists to carry to a laptop.
+    A `.DS_Store` Finder drops into the directory, or the `__pycache__` Python
+    writes beside a module of the skill imported from it, must not read as a
+    change, or every such machine would be told to update forever; an edited
+    reference must, since that is the change the digest exists to carry to a
+    laptop.
     """
     shutil.copytree(onboarding.SKILL_DIR, installed)
     (installed / ".DS_Store").write_bytes(b"\x00")
     (installed / "references" / ".DS_Store").write_bytes(b"\x00")
+    bytecode = installed / "scripts" / "__pycache__"
+    bytecode.mkdir(parents=True, exist_ok=True)
+    (bytecode / "pns_mcp.cpython-315.pyc").write_bytes(b"\x00")
 
     assert main(["skill", "--path", str(installed)]) == 0
 
