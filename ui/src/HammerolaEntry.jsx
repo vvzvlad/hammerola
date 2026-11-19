@@ -47,6 +47,7 @@
 
 import React from 'react';
 
+import { brandName, branded } from './brand.js';
 import { format, navigate, parse, respell, subscribe, unsubscribe } from './address.js';
 import {
   deleteProject, hubOrigin, loadIndex, loadStart, projectCard, projectUrl,
@@ -364,6 +365,15 @@ function copyLines(lines) {
 }
 
 /**
+ * The line a hub shows once its operator has replaced the name or the mark: the
+ * product underneath is still hammerola. Drawn on the front page and the door,
+ * not on the build page, whose bottom bar keeps one size on every view.
+ */
+const poweredBy = () => (
+  <span style={css(`font:400 11px ${SANS};color:var(--text-faint)`)}>Powered by hammerola</span>
+);
+
+/**
  * The door: the screen a refusal looks like.
  *
  * It has one state. Holding a token the hub accepts means being on the list
@@ -372,7 +382,6 @@ function copyLines(lines) {
  */
 export class HammerolaLogin extends React.Component {
   static defaultProps = {
-    title: 'hammerola',
     description: DESCRIPTION,
     animate: true,
     busy: false,
@@ -448,13 +457,14 @@ export class HammerolaLogin extends React.Component {
   }
 
   render() {
-    const { title, description, animate, busy, error, start } = this.props;
+    const { description, animate, busy, error, start } = this.props;
+    const title = brandName();
     const s = this.state;
     return (
       <div style={{
         ...css('width:100%;min-height:100vh;position:relative;overflow:hidden;'
           + `background:${PAGE_BG};font-family:${SANS};color:${PAGE_FG};`
-          + 'display:flex;align-items:center;justify-content:center'),
+          + 'display:flex;flex-direction:column;align-items:center;justify-content:center'),
         ...FONTS,
       }}
       >
@@ -532,6 +542,15 @@ export class HammerolaLogin extends React.Component {
 
           <div style={css(`font:400 11px ${MONO};color:var(--text-faint);margin-top:22px`)}>rev-pinned · agent-built</div>
         </div>
+        {/* In the column under the card, not pinned to the screen's bottom: on
+            a window shorter than the card the card fills the screen, and a
+            pinned line would sit on top of it. Relative so it paints above the
+            backdrop, as the card does. */}
+        {branded() && (
+          <div style={css('position:relative;margin:14px 0')}>
+            {poweredBy()}
+          </div>
+        )}
       </div>
     );
   }
@@ -1289,7 +1308,7 @@ export class HammerolaProjects extends React.Component {
           + HEADER_BAR)}>
           <div style={css(ROW)}>
             <Mark />
-            <span style={css(WORDMARK)}>hammerola</span>
+            <span style={css(WORDMARK)}>{brandName()}</span>
           </div>
           <div style={css(HEADER_RULE)} />
           {/* The trail to the open folder: the root and each folder above it
@@ -1367,6 +1386,11 @@ export class HammerolaProjects extends React.Component {
             a project is listed from its first `git push` — never from a `dev` push
           </div>
           {this.drawBrief()}
+          {branded() && (
+            <div style={css('padding-top:20px;text-align:center')}>
+              {poweredBy()}
+            </div>
+          )}
         </div>
 
         {/* Outside the column and `position:fixed`, so it appears mid-screen

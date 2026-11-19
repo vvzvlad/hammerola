@@ -56,6 +56,8 @@ services:
     # cap_add: [CHOWN, DAC_OVERRIDE, SETUID, SETGID]
     volumes:
       - hammerola:/app/data          # all mutable state survives restart/update
+      # The hub's own logo, a file on the host mounted read-only (HUB_LOGO below).
+      # - /srv/example/logo.svg:/app/brand/logo.svg:ro
     # Configuration belongs in this block or in a file that travels with the stack, never in
     # an `env_file:` with an absolute host path: Portainer runs compose inside its own
     # container, so that path resolves in the Portainer server's filesystem, not on the host.
@@ -73,6 +75,11 @@ services:
       # Tokens of the forges that hold the projects' backup copies, one `https://<login>:<token>@<host>`
       # per forge, separated by spaces. Optional: without it the hub sends no copies.
       # MIRROR_CREDENTIALS: XXX
+      # The hub's own name and logo instead of "hammerola" and its mark. Optional; with
+      # either set, the front page says "Powered by hammerola" at the bottom. HUB_LOGO is
+      # the path inside the container of the file mounted above.
+      # HUB_NAME: Example Lab
+      # HUB_LOGO: /app/brand/logo.svg
       # Everything below has a default in src/settings.py and is spelled out here
       # only where a different value is wanted. DATA_DIR must match the mount
       # point of the volume declared above.

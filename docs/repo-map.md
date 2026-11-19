@@ -413,7 +413,13 @@
   has to be on the opposite side of mid-grey from the background its name
   promises. `mark-on-dark.svg` is the reference for the dark palette: the dark
   theme's tokens in `static/_v/tokens.css` are taken from its inks, and
-  `ui/tests/chrome.test.js` checks them against this file
+  `ui/tests/chrome.test.js` checks them against this file.
+  A hub can show its own name and logo instead (`HUB_NAME`, `HUB_LOGO`, SPEC 4):
+  the server writes them into each page as it serves it (`render.brand_page` —
+  the tab's title and icon, two meta tags, the resolver's header) and hands out
+  the logo file at `/logo`; the bundle reads the meta tags through
+  `ui/src/brand.js`, which `Mark` and the wordmarks ask. The templates and these
+  files stay as they are, so the comparisons above still hold
 - `model_template/` — the starter project `hammerola create` unpacks, served at
   `/start/template.tar.gz`: a `model.py` that BUILDS AS IT STANDS, a
   `.gitignore`, a `ref/measurements.md` for the numbers the model claims to

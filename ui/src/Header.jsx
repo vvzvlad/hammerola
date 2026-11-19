@@ -13,6 +13,7 @@
 
 import React from 'react';
 
+import { brandName } from './brand.js';
 import { COMMENT_ICON, commentsButton } from './comments.jsx';
 import { baseName, fileRows, filesId, sizeText, sourceFileUrl, sourceUrl } from './filesview.js';
 import { headMenu, headRow } from './headmenu.jsx';
@@ -486,7 +487,7 @@ export default class Header extends React.Component {
         <div style={css(v.headerStyle)}>
           <a href="/" title="all projects" style={css('display:flex;align-items:center;gap:8px;text-decoration:none;color:inherit')}>
             <Mark />
-            {v.showWordmark && <span style={css(WORDMARK)}>hammerola</span>}
+            {v.showWordmark && <span style={css(WORDMARK)}>{brandName()}</span>}
           </a>
           <div style={css(HEADER_RULE)} />
           <div style={css(v.titleColStyle)}>

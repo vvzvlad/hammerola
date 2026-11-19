@@ -81,6 +81,9 @@ def settings_for(data_dir, **overrides):
         kicad_url=None,
         # No forge tokens, as a hub without MIRROR_CREDENTIALS: no copies.
         mirror_credentials=None,
+        # The stock look, as a hub without HUB_NAME / HUB_LOGO.
+        hub_name=None,
+        hub_logo=None,
         host="127.0.0.1",
         port=0,  # ask the OS for a free port, then read back which one
         data_dir=str(data_dir),

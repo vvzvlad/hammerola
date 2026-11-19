@@ -347,6 +347,54 @@ def build_page_html(theme: str, preview: str = "") -> str:
     return _page("build.html", theme).replace("</head>", preview + "</head>", 1)
 
 
+# The image types HUB_LOGO may be, by file suffix: `Settings` refuses any other
+# at startup, and the `/logo` route answers with the type the suffix names. Here
+# and not in src/settings.py, which builds the settings on import: src/app.py
+# reads this table and must stay importable without the environment.
+LOGO_TYPES = {
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".jpg": "image/jpeg",
+    ".jpeg": "image/jpeg",
+    ".webp": "image/webp",
+    ".gif": "image/gif",
+}
+
+# The strings `brand_page` rewrites, as the templates spell them. Each occurs
+# once per template where meant; tests/test_brand.py holds them to the files.
+TITLE_TAG = "<title>hammerola</title>"
+FAVICON_LINK = '<link rel="icon" type="image/svg+xml" href="/_v/favicon.svg">'
+POINTER_MARK = re.compile(r'(<svg width="18".*?</svg>)<b>hammerola</b>', re.S)
+
+
+def brand_page(page: str, name: str | None, logo: bool) -> str:
+    """The operator's own name and mark in place of hammerola's, in one page.
+
+    `name` is HUB_NAME, `logo` says HUB_LOGO is set (the file is served at
+    `/logo`). The pages that load the bundle only get the `<meta>` tags
+    `ui/src/brand.js` reads; the title and the icon link are rewritten here
+    because they are read before any script runs, and the pointer page, which
+    loads no bundle, has its own mark rewritten in place. With neither set the
+    page is returned as it came.
+    """
+    if name is None and not logo:
+        return page
+    shown = html.escape(name, quote=True) if name is not None else None
+    tags = ""
+    if shown is not None:
+        page = page.replace(TITLE_TAG, f"<title>{shown}</title>", 1)
+        tags += f'<meta name="hmr-brand-name" content="{shown}">'
+    if logo:
+        page = page.replace(FAVICON_LINK, '<link rel="icon" href="/logo">', 1)
+        tags += '<meta name="hmr-brand-logo" content="/logo">'
+    page = POINTER_MARK.sub(
+        lambda found: (('<img src="/logo" alt="" height="18">' if logo
+                        else found.group(1))
+                       + f"<b>{shown or 'hammerola'}</b>"),
+        page, count=1)
+    return page.replace("</head>", tags + "</head>", 1)
+
+
 def link_preview(meta: dict, page: str) -> str:
     """The `<meta>` tags a messenger unfurls a link to this build from.
 
