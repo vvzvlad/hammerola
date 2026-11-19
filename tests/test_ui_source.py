@@ -621,6 +621,12 @@ def test_nothing_splits_the_bundle():
 # prefix, which would admit real requests to that host.
 XML_NAMESPACES = {"http://www.w3.org/2000/svg"}
 
+# Addresses a reader follows rather than ones the page fetches: `default-src`
+# governs what the page loads, not where a click on a link goes. The "Powered by
+# hammerola" line of a branded hub leads to the repository. Enumerated for the
+# same reason as above.
+NAVIGATION_LINKS = {"https://github.com/vvzvlad/hammerola"}
+
 
 def test_no_external_urls_in_the_ui():
     """`default-src 'self'` — an absolute URL to another host is blocked, with no
@@ -629,7 +635,7 @@ def test_no_external_urls_in_the_ui():
     for path in INTERFACE_FILES + ADAPTER_FILES:
         found = [url for url in re.findall(r"https?://[^\s'\"`)]+",
                                            strip_comments(read(path)))
-                 if url not in XML_NAMESPACES]
+                 if url not in XML_NAMESPACES | NAVIGATION_LINKS]
         if found:
             offenders[path.name] = found
     assert not offenders, f"absolute URLs the CSP will block: {offenders}"
