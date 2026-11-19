@@ -126,10 +126,35 @@ done.** Finding the source data is the lead's job; a subagent builds from it.
 one line: which quantity changes — envelope, volume, clearance, fit — and by
 how much.
 
-**The part is done when its numbers stop moving.** The log's `metrics vs dev:`
-block saying `every measured number is the same (N part numbers compared)` is
-the signal; twice in a row, the rounds have left the part for the instrument.
-Say it can be printed, and stop.
+**Look at the part the way he will, and remove what you cannot explain.** After a
+build that changed a printable, look at it alone — `hammerola snapshot <build>`
+with the rest hidden, from the sides that changed — as a stranger would. Whatever
+makes you ask "what is that for?" either has an answer you can say in one breath —
+it carries the load, seats the board, lets the cable through, clears the rail,
+gives the part a face to print on — or it goes: a gap is closed, material is
+removed. This is common sense, not a rule per face. A slot, pocket, step or stub
+of wall nobody needs costs print time and mass; a slit costs stiffness exactly
+where two pieces join; all of them make the part look unfinished. Most come from
+building the part out of pieces: each sized from its own constant, joined by
+`union`, they meet 0.8 mm apart or 2 mm short, and nothing goes red. Two bodies
+meet flush or with a gap that has a job; the same job gets the same answer
+everywhere on the part. When you move or extend a piece, ask whether its new place
+still needs it, not where it used to end. (One head mount came back with nine such
+places, its owner asking "зачем" of each: a 0.8 mm slit between a shelf's fill and
+the camera's wall, a lip 2.5 mm wider than the cheeks over it, a 4 mm channel
+under the endstop tab, the camera's walls carried on to the print face 16 mm past
+the board.)
+
+**A pair of eyes without the history.** The author remembers what each piece was
+for when it was drawn; a stranger sees only what is there. Before handing over a
+revision whose printable changed in shape, give a subagent the request in his
+words and snapshots of the part alone, and ask what on it it cannot explain. Each
+item gets its job named or is removed.
+
+**The part is done when its numbers stop moving and nothing on it needs
+explaining.** The log's `metrics vs dev:` block saying `every measured number
+is the same (N part numbers compared)` is the signal; twice in a row, the
+rounds have left the part for the instrument. Say it can be printed, and stop.
 
 ## The working cycle
 
@@ -290,6 +315,9 @@ itself; the file beside each names the rest.
   (`references/checks.md`).
 * **A number with no provenance**, or an `estimated` quoted back afterwards as
   a measurement (`references/brief.md`).
+* **A seam between two pieces** — a fill sized from one constant and a wall from
+  another meet 0.8 mm apart: a slit that prints as two extra walls and weakens the
+  joint. Only a look at the part alone shows it (While the work is running).
 
 ## When a build fails
 
