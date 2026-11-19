@@ -366,11 +366,13 @@ function copyLines(lines) {
 
 /**
  * The line a hub shows once its operator has replaced the name or the mark: the
- * product underneath is still hammerola. Drawn on the front page and the door,
- * not on the build page, whose bottom bar keeps one size on every view.
+ * product underneath is still hammerola, and the line leads to its repository.
+ * Drawn on the front page and the door, not on the build page, whose bottom bar
+ * keeps one size on every view.
  */
 const poweredBy = () => (
-  <span style={css(`font:400 11px ${SANS};color:var(--text-faint)`)}>Powered by hammerola</span>
+  <a href="https://github.com/vvzvlad/hammerola" target="_blank" rel="noopener noreferrer"
+     style={css(`font:400 11px ${SANS};color:var(--text-faint);text-decoration:none`)}>Powered by hammerola</a>
 );
 
 /**
