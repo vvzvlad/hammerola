@@ -86,3 +86,45 @@ def test_empty_credential_fails(monkeypatch):
     monkeypatch.setenv("EDIT_TOKEN", "")
     with pytest.raises(ValidationError):
         Settings(_env_file=None)
+
+
+def test_hub_branding_is_off_by_default(monkeypatch):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    for name in ("HUB_NAME", "HUB_LOGO"):
+        monkeypatch.delenv(name, raising=False)
+    s = Settings(_env_file=None)
+    assert (s.hub_name, s.hub_logo) == (None, None)
+
+
+@pytest.mark.parametrize("name, kept", [("", None), ("  ", None), (" Acme ", "Acme")])
+def test_hub_name_is_stripped_and_blank_means_none(monkeypatch, name, kept):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    monkeypatch.setenv("HUB_NAME", name)
+    assert Settings(_env_file=None).hub_name == kept
+
+
+def test_hub_logo_is_an_existing_image_file(monkeypatch, tmp_path):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    logo = tmp_path / "mark.PNG"
+    logo.write_bytes(b"x")
+    monkeypatch.setenv("HUB_LOGO", str(logo))
+    assert Settings(_env_file=None).hub_logo == str(logo)
+    monkeypatch.setenv("HUB_LOGO", "")
+    assert Settings(_env_file=None).hub_logo is None
+
+
+def test_hub_logo_naming_no_file_is_refused_with_its_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    missing = tmp_path / "gone.png"
+    monkeypatch.setenv("HUB_LOGO", str(missing))
+    with pytest.raises(ValidationError, match="gone.png"):
+        Settings(_env_file=None)
+
+
+def test_hub_logo_of_a_wrong_suffix_is_refused_with_its_path(monkeypatch, tmp_path):
+    monkeypatch.setenv("EDIT_TOKEN", "s3cret")
+    notes = tmp_path / "notes.txt"
+    notes.write_bytes(b"x")
+    monkeypatch.setenv("HUB_LOGO", str(notes))
+    with pytest.raises(ValidationError, match="notes.txt"):
+        Settings(_env_file=None)

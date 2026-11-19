@@ -1,8 +1,11 @@
+from pathlib import Path
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from src.config_errors import load_settings_or_exit
 from src.mirror import parse_credentials
+from src.render import LOGO_TYPES
 
 
 class Settings(BaseSettings):
@@ -33,6 +36,32 @@ class Settings(BaseSettings):
         # `KICAD_URL: ""` in a stack means no service as well, so builds and
         # documents read one "none" instead of an empty address.
         return value or None
+
+    # The operator's own branding. HUB_NAME replaces the word "hammerola" and
+    # HUB_LOGO (a path INSIDE the container, normally a file bind-mounted from
+    # the host) replaces the mark, wherever the hub shows them; with either set
+    # the front page and the login screen add a "Powered by hammerola" line.
+    hub_name: str | None = None
+    hub_logo: str | None = None
+
+    @field_validator("hub_name")
+    @classmethod
+    def _clean_hub_name(cls, value):
+        return (value or "").strip() or None
+
+    @field_validator("hub_logo")
+    @classmethod
+    def _check_hub_logo(cls, value):
+        if not value or not value.strip():
+            return None
+        path = Path(value)
+        if not path.is_file():
+            raise ValueError(f"HUB_LOGO {value!r} is not an existing file")
+        if path.suffix.lower() not in LOGO_TYPES:
+            raise ValueError(
+                f"HUB_LOGO {value!r} must end in one of "
+                + " ".join(sorted(LOGO_TYPES)))
+        return value
 
     # The tokens of the forges that hold the projects' backup copies
     # (src/mirror.py): one entry per forge, `https://<login>:<token>@<host[:port]>`

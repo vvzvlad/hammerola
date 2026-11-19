@@ -15,6 +15,8 @@
 
 import React from 'react';
 
+import { brandLogo } from './brand.js';
+
 /* CSS string -> React style object. Only here to keep the mock-ups' markup 1:1. */
 const cssCache = new Map();
 export function css(str) {
@@ -111,14 +113,21 @@ export const NARROW = '(max-width: 720px)';
  *
  * The stroke width is not a prop: 6.5 is the width of the ribbon where it
  * turns, so changing it draws a different mark.
+ *
+ * A hub whose operator set HUB_LOGO draws that image instead, at the same height
+ * (`brand.js`); `ink` and `hole` do not apply to it.
  */
-export const Mark = ({ size = 18, ink = 'var(--mark-ink)', hole = 'var(--mark-hole)' }) => (
-  <svg width={size} height={size} viewBox="0 0 48 48">
-    <rect x="11" y="5" width="9" height="38" fill={ink} />
-    <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke={ink} strokeWidth="6.5" />
-    <circle cx="15.5" cy="12" r="1.9" fill={hole} />
-    <circle cx="15.5" cy="20" r="1.9" fill={hole} />
-    <circle cx="15.5" cy="28" r="1.9" fill={hole} />
-    <circle cx="15.5" cy="36" r="1.9" fill={hole} />
-  </svg>
-);
+export const Mark = ({ size = 18, ink = 'var(--mark-ink)', hole = 'var(--mark-hole)' }) => {
+  const logo = brandLogo();
+  if (logo) return <img src={logo} alt="" style={{ height: size, width: 'auto', display: 'block' }} />;
+  return (
+    <svg width={size} height={size} viewBox="0 0 48 48">
+      <rect x="11" y="5" width="9" height="38" fill={ink} />
+      <path d="M20 23.5h8a8.5 8.5 0 018.5 8.5v11" fill="none" stroke={ink} strokeWidth="6.5" />
+      <circle cx="15.5" cy="12" r="1.9" fill={hole} />
+      <circle cx="15.5" cy="20" r="1.9" fill={hole} />
+      <circle cx="15.5" cy="28" r="1.9" fill={hole} />
+      <circle cx="15.5" cy="36" r="1.9" fill={hole} />
+    </svg>
+  );
+};

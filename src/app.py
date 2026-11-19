@@ -17,7 +17,10 @@ Routing (SPEC 3, 7.4):
                                               directory they are read from
     GET  /start/hammerola                     the client, as one file
     GET  /start/template.tar.gz               a model directory that builds
-    GET  /favicon.ico                         the site icon, as SVG bytes
+    GET  /favicon.ico                         the site icon, as SVG bytes; the
+                                              HUB_LOGO file when one is set
+    GET  /logo                                the operator's HUB_LOGO file; 404
+                                              when none is set
     GET  /project/<pid>/                      picks the pointer this reader last
                                               opened (SPEC 9) of the default
                                               variant; the URL without the
@@ -611,10 +614,16 @@ GET_ROUTES = (
          handler._serve_start(rest, with_body)),
     # SVG bytes at a `.ico` URL, deliberately: pages link the icon by
     # its real name, and the Content-Type comes from the file's own
-    # extension.
+    # extension. A hub with HUB_LOGO answers with that file instead: a
+    # document opened on its own links no icon and lands here.
     ((("favicon.ico",), 1),
      lambda handler, rest, query, trailing_slash, with_body:
-         handler._serve_asset([FAVICON_ASSET], with_body)),
+         handler._serve_logo(with_body) if handler.server.settings.hub_logo
+         else handler._serve_asset([FAVICON_ASSET], with_body)),
+    # The operator's own mark (HUB_LOGO); 404 on a hub that has none.
+    ((("logo",), 1),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._serve_logo(with_body)),
     ((("project",), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._serve_project(rest, trailing_slash, with_body, query)),
@@ -771,7 +780,10 @@ class HubHandler(BaseHTTPRequestHandler):
         carries `Vary: Cookie`. `page` makes the document for a theme.
         """
         theme = render.cookie_theme(self.headers.get("Cookie", ""))
-        self._send(200, page(theme).encode("utf-8"), HTML_TYPE, CACHE_NONE,
+        settings = self.server.settings
+        document = render.brand_page(
+            page(theme), settings.hub_name, settings.hub_logo is not None)
+        self._send(200, document.encode("utf-8"), HTML_TYPE, CACHE_NONE,
                    PAGE_HEADERS, with_body)
         return None
 
@@ -944,6 +956,25 @@ class HubHandler(BaseHTTPRequestHandler):
             path.relative_to(assets_root)
         except ValueError:
             return self._error(404, "not found", with_body=with_body)
+        return self._serve_static_file(path, content_type_for(path.name),
+                                       with_body)
+
+    def _serve_logo(self, with_body: bool):
+        """/logo — the operator's HUB_LOGO file, in the type its suffix names."""
+        logo = self.server.settings.hub_logo
+        if logo is None:
+            return self._error(404, "not found", with_body=with_body)
+        path = Path(logo)
+        return self._serve_static_file(
+            path, render.LOGO_TYPES[path.suffix.lower()], with_body)
+
+    def _serve_static_file(self, path: Path, ctype: str, with_body: bool):
+        """One file the image or the operator ships, `no-cache` with a weak ETag.
+
+        Shared by `/_v/<file>` and `/logo`. The file is opened before the first
+        header, so a vanished or non-regular file is a 404 and not a Content-Length
+        that cannot be retracted.
+        """
         try:
             handle = open(path, "rb")
         except OSError:
@@ -952,22 +983,22 @@ class HubHandler(BaseHTTPRequestHandler):
             info = os.fstat(handle.fileno())
             if not stat.S_ISREG(info.st_mode):
                 return self._error(404, "not found", with_body=with_body)
-            # No immutable year here: every file under `static/_v/` changes
+            # No immutable year here: the files under `static/_v/` change
             # under a stable name with the image (`make viewer` rewrites
-            # `three-cad-viewer.esm.js` too).
+            # `three-cad-viewer.esm.js` too), and the operator's logo changes
+            # on the host under the same path.
             #
             # `no-cache` is affordable only with a validator, or every visit
             # refetches megabytes. Weak, from size and mtime rather than a
-            # hash: every file here is written by `make ui`, `make viewer` or
-            # the image build, which set a fresh mtime.
+            # hash: `make ui`, `make viewer`, the image build and an ordinary
+            # copy onto the host all set a fresh mtime. A logo replaced with
+            # its old size and mtime kept (`cp -p`) is not seen as new.
             etag = 'W/"{:x}-{:x}"'.format(info.st_size, info.st_mtime_ns)
             # Browsers echo the tag they were given; equality suffices.
             if self.headers.get("If-None-Match") == etag:
-                self._headers(304, content_type_for(path.name), 0,
-                              CACHE_NONE, {"ETag": etag})
+                self._headers(304, ctype, 0, CACHE_NONE, {"ETag": etag})
                 return None
-            self._headers(200, content_type_for(path.name), info.st_size,
-                          CACHE_NONE, {"ETag": etag})
+            self._headers(200, ctype, info.st_size, CACHE_NONE, {"ETag": etag})
             if not with_body:
                 return None
             while True:
