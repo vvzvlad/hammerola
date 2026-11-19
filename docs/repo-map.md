@@ -460,9 +460,10 @@
   COPY IS CURRENT IS DECIDED BY A DIGEST OF ITS FILES, never by a number
   somebody raises: `hammerola/skill.tree_digest`, which the hub imports for the
   manifest's `skill_digest` (`onboarding.skill_digest`), so any change to any
-  file of the skill changes it. Hidden files are left out on both sides — the
-  hub refuses to serve one, and Finder drops `.DS_Store` into the installed
-  directory. `manifest()` reads every file of the skill for it, so an unreadable
+  file of the skill changes it. Hidden files and `__pycache__` are left out on
+  both sides — the hub refuses to serve a hidden file, Finder drops `.DS_Store`
+  into the installed directory, and Python writes bytecode there beside a module
+  of the skill imported from it, which the image never carries. `manifest()` reads every file of the skill for it, so an unreadable
   one takes the whole `/start` document down to a 404; `ci/smoke.py` holds
   `/start` out of `START_ROUTES` because the archive route opens the same
   files, leans on check (g), which requires `/app/skill/SKILL.md` and one of

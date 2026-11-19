@@ -375,16 +375,21 @@ def tree_digest(directory) -> str:
 def tree_files(directory) -> list:
     """(relative POSIX path, path) for every file `tree_digest` covers, sorted.
 
-    Regular files only, never a symlink, and nothing under a name that starts
-    with `.`: macOS leaves `.DS_Store` in an installed directory, and the hub
-    refuses to serve a hidden file in the skill (`onboarding.skill_bytes`).
+    Regular files only, never a symlink, nothing under a name that starts with
+    `.` and nothing under `__pycache__`: macOS leaves `.DS_Store` in an
+    installed directory, and the hub refuses to serve a hidden file in the skill
+    (`onboarding.skill_bytes`); Python writes bytecode beside a module of the
+    skill imported or compiled from the installed copy (`import pns_mcp`,
+    `py_compile`), and the image never carries any (`.dockerignore`). Either
+    would read as a stale skill on every machine that has one.
     """
     root = Path(directory)
     found = []
     for path in root.rglob("*"):
         name = path.relative_to(root).as_posix()
         if (not path.is_file() or path.is_symlink()
-                or any(part.startswith(".") for part in name.split("/"))):
+                or any(part.startswith(".") or part == "__pycache__"
+                       for part in name.split("/"))):
             continue
         found.append((name, path))
     return sorted(found)
