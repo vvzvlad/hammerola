@@ -7,9 +7,10 @@ import { afterEach, describe, expect, it } from 'vitest'
 
 import { HammerolaLogin, HammerolaProjects } from '../src/HammerolaEntry.jsx'
 import { Mark } from '../src/style.jsx'
-import { collect, texts } from './eltree.js'
+import { collect, links, texts } from './eltree.js'
 
 const POWERED = 'Powered by hammerola'
+const REPO = 'https://github.com/vvzvlad/hammerola'
 
 function setMeta(name, content) {
   const tag = document.createElement('meta')
@@ -55,6 +56,9 @@ describe.each([['the door', door], ['the project list', list]])('%s', (_, draw) 
     expect(texts(tree)).not.toContain('hammerola')
     expect(texts(tree)).toContain(POWERED)
     expect(marks(tree)).toContainEqual({ type: 'img', src: '/logo' })
+    // The credit line leads to hammerola's repository.
+    const credit = links(tree).find((a) => texts(a).includes(POWERED))
+    expect(credit.props.href).toBe(REPO)
   })
 
   it('credits hammerola when only the name was replaced', () => {
