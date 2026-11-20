@@ -918,7 +918,9 @@ export default class HammerolaViewer extends React.Component {
       secFace: null, secPop: false,
       // The joints of the view on screen and where each stands (`motionFor`),
       // null for a view that declares none; `motionPop` is its popover.
-      motion: null, motionPop: false,
+      // `jointDrag`: the row's switch, whether a press on a moving part drags
+      // it (`jointGrip` in viewport/tools.js); for this page only, off at load.
+      motion: null, motionPop: false, jointDrag: false,
       // The Settings card's answers about the model, remembered per browser
       // (store.js).
       retina: readRetina(),
@@ -3310,7 +3312,7 @@ export default class HammerolaViewer extends React.Component {
         ...scene,
         cut: s.secOn, cutOffset: s.secOff, cutFlip: s.secFlip, cutHatch: s.hatch,
         retina: s.retina, perspective: s.perspective, hoverHighlight: s.hoverHighlight, studio: s.studio,
-        tool: s.tool,
+        tool: s.tool, jointDrag: s.jointDrag,
         diffShow: s.diffShow, pins,
         ...(extra || {}),
       },
@@ -5343,6 +5345,11 @@ export default class HammerolaViewer extends React.Component {
       motionShown: !!motion,
       motionRowStyle: 'flex:none;display:inline-flex;align-items:center;gap:7px;margin:0 0 3px;padding:4px 8px;border-radius:5px;border:1px solid ' + (posedNow ? 'var(--accent-line);background:var(--accent-bg-soft)' : 'transparent;background:var(--float-bg-soft)'),
       motionSub: posedNow ? 'moved' : 'rest',
+      // The switch in the slot the section row keeps its eye in, drawn like
+      // that eye: on, a press on a moving part drags it; off, it turns the view.
+      motionDragClick: stop(() => this.set({ jointDrag: !s.jointDrag })),
+      motionDragOuter: eyeOuter(s.jointDrag ? 'on' : 'off'),
+      motionDragDot: eyeDot(s.jointDrag ? 'on' : 'off'),
       openMotionPop: stop(() => this.setState({ motionPop: true, secPop: false })),
       closeMotionPop: stop(() => this.setState({ motionPop: false })),
       // The section popover's recipe, one row lower.
@@ -5591,11 +5598,13 @@ export default class HammerolaViewer extends React.Component {
                   <span onClick={v.openSecPop} style={css(`font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.secSub}</span>
                 </div>
 
-                {/* The joints of the view: no eye (there is nothing to switch
-                    off), its slot kept so the icon stands under the section's. */}
+                {/* The joints of the view. In the eye's slot, under the
+                    section's, the switch for dragging moving parts. */}
                 {v.motionShown && (
                   <div style={css(v.motionRowStyle)}>
-                    <span style={css('width:24px;flex:none')} />
+                    <div onClick={v.motionDragClick} title="drag moving parts with the mouse" style={css('width:24px;flex:none;display:flex;justify-content:center;cursor:pointer;padding:2px 0')}>
+                      <span style={css(v.motionDragOuter)}><span style={css(v.motionDragDot)} /></span>
+                    </div>
                     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="var(--text-soft)" strokeWidth="1.4" style={{ flex: 'none' }}><circle cx="8" cy="8" r="1.6" /><path d="M8 8L14 4" /><path d="M2.5 8a5.5 5.5 0 0 1 11 0" /></svg>
                     <span onClick={v.openMotionPop} style={css(`font:600 12px ${MONO};color:var(--text);cursor:pointer;white-space:nowrap`)}>motion</span>
                     <span onClick={v.openMotionPop} style={css(`font:400 10.5px ${MONO};color:var(--text-muted);cursor:pointer;white-space:nowrap;padding-right:2px`)}>{v.motionSub}</span>

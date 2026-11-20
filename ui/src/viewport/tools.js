@@ -8,10 +8,11 @@
 // the press is watched so a release without movement can be reported as a pick,
 // and rotation stays the library's.
 //
-// Except a plain left press on a part a joint moves (no tool, or Move): it
-// drags that joint (`jointGrip`), and the values go up as `hmr:joints`. With
-// Alt nothing of ours takes the left press, whatever is armed: Alt is the
-// reader's way to orbit from anywhere (scene3d.js refuses it too).
+// Except a plain left press on a part a joint moves (no tool, or Move) while
+// the motion row's switch is on (`jointDrag`): it drags that joint
+// (`jointGrip`), and the values go up as `hmr:joints`. With Alt nothing of
+// ours takes the left press, whatever is armed: Alt is the reader's way to
+// orbit from anywhere (scene3d.js refuses it too).
 //
 // `wheel` is left alone in every mode, so zoom works while a tool is up.
 //
@@ -366,8 +367,9 @@ export function installTools(vp) {
 
   /**
    * The joint a plain left press on the canvas drags, as the gesture's record,
-   * or null when the press is not one (no joint above the part under it, a
-   * modifier, a line the view cannot drag along), and the trackball keeps it.
+   * or null when the press is not one (the motion row's switch off, no joint
+   * above the part under it, a modifier, a line the view cannot drag along),
+   * and the trackball keeps it.
    *
    * The joint's line is carried into the world once, through the world matrix
    * of the node's parent group (the frame `jointNodes` declares it in): the drag
@@ -382,7 +384,7 @@ export function installTools(vp) {
    * the slider moves the part.
    */
   const jointGrip = (g, event) => {
-    if (!vp.jointNodes.size || event.pointerType === "touch"
+    if (!vp.state.jointDrag || !vp.jointNodes.size || event.pointerType === "touch"
         || event.ctrlKey || event.metaKey || event.shiftKey) {
       return null;
     }
@@ -662,10 +664,10 @@ export function installTools(vp) {
       // The move tool takes no press of its own here: its manipulator (gizmo.js,
       // rings.js) takes its presses in a capture-phase window listener that
       // runs first, so a press reaching this line under `move` missed it and
-      // means what it means with no tool: on a part a joint moves it drags the
-      // joint; elsewhere a click selects and a drag orbits. The tool stays on
-      // `press` rather than null: a click falls through `onUp` to the plain
-      // pick, like an unknown tool.
+      // means what it means with no tool: on a part a joint moves, with the
+      // motion row's switch on, it drags the joint; elsewhere a click selects
+      // and a drag orbits. The tool stays on `press` rather than null: a click
+      // falls through `onUp` to the plain pick, like an unknown tool.
       press.joint = jointGrip(g, event);
       if (!press.joint) return;
     }
