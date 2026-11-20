@@ -513,8 +513,10 @@ export function commentRail(v) {
               <span style={css(c.pinStyle)}>{c.label}</span>
               {/* A long part name wraps and the time stays on one line: cut
                   by an ellipsis instead, two parts that differ only in their
-                  ending (`…_ddbb77`, `…_888888`) would read the same. */}
-              <span style={css(`flex:1;min-width:0;overflow-wrap:anywhere;font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
+                  ending (`…_ddbb77`, `…_888888`) would read the same. It
+                  breaks at any character, so each line is filled: wrapped at
+                  its hyphen, `WB-T507_…` left `WB-` alone on the first line. */}
+              <span style={css(`flex:1;min-width:0;word-break:break-all;font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
               <span style={css(`flex:none;white-space:nowrap;font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
             </div>
             <div style={css(`font:400 12px/1.5 ${SANS};color:var(--text);margin:7px 0 8px`)}>{c.text}</div>
