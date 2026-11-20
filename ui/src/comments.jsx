@@ -511,9 +511,11 @@ export function commentRail(v) {
           <div key={c.key} onClick={c.onOpen} style={css(c.style)}>
             <div style={css(ROW)}>
               <span style={css(c.pinStyle)}>{c.label}</span>
-              <span style={css(`font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
-              <span style={css(FILL)} />
-              <span style={css(`font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
+              {/* A long part name wraps and the time stays on one line: cut
+                  by an ellipsis instead, two parts that differ only in their
+                  ending (`…_ddbb77`, `…_888888`) would read the same. */}
+              <span style={css(`flex:1;min-width:0;overflow-wrap:anywhere;font:500 11.5px ${MONO};color:var(--text)`)}>{c.part}</span>
+              <span style={css(`flex:none;white-space:nowrap;font:400 10.5px ${MONO};color:var(--text-muted)`)}>{c.time}</span>
             </div>
             <div style={css(`font:400 12px/1.5 ${SANS};color:var(--text);margin:7px 0 8px`)}>{c.text}</div>
             <div style={css(c.saysStyle)}>{c.says}</div>
