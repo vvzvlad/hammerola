@@ -83,6 +83,11 @@ const INITIAL_STATE = {
   // library's Studio tab.
   studio: false,
   tool: null,
+  // Whether a plain left press on a part a joint moves drags that joint
+  // (`jointGrip` in tools.js) — the switch on the interface's motion row. Off
+  // by default: a press meant to turn the view lands on a moving part as often
+  // as anywhere else, and the joints have their sliders.
+  jointDrag: false,
   pins: [],
   camera: null,
   // Which kind of scene this is, informational only: nothing here branches on

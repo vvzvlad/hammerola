@@ -748,7 +748,8 @@
   page (`setJoints`), and the page's motion row in the parts tree holds a slider
   per joint, the poses and Reset (`motionFor` in `HammerolaViewer.jsx`). It also
   holds the arithmetic of dragging a jointed part in the scene (`jointAbove`,
-  `rayAngle`, `slidBy`), whose press `tools.js` takes and whose values go up as
+  `rayAngle`, `slidBy`), whose press `tools.js` takes while the motion row's
+  switch is on (`jointDrag`, off at load) and whose values go up as
   `hmr:joints` to the slider's own path
 - `viewer/` — the viewer LIBRARY's own source: `three-cad-viewer` forked into
   this tree (MIT, issue #14; the tag and commit it sits on are recorded in

@@ -962,7 +962,7 @@ describe('a press on a part a joint moves', () => {
   /** The pixel of the fake canvas that shows world (x, y): 800 x 600 over 40 x 30. */
   const pixel = ([x, y]) => [(x / 20 + 1) * 400, (1 - y / 15) * 300]
 
-  function jointed(state = { tool: null }, camera = undefined) {
+  function jointed(state = { tool: null, jointDrag: true }, camera = undefined) {
     const frame = new THREE.Group()
     frame.position.set(3, 4, 0)
     frame.quaternion.setFromAxisAngle(new THREE.Vector3(1, 0, 0), Math.PI / 2)
@@ -1019,14 +1019,14 @@ describe('a press on a part a joint moves', () => {
   })
 
   it('is dragged under Move as with no tool, and left to any other tool', () => {
-    const moving = jointed({ tool: 'move' })
+    const moving = jointed({ tool: 'move', jointDrag: true })
     expect(pointerDown(moving, pixel([8, 4])).preventDefault).toHaveBeenCalled()
     pointerMove(pixel([3, 9]))
     expect(doorAt(moving)).toHaveLength(1)
     pointerUp(pixel([3, 9]))
 
     // The measure tool keeps its own press: a drag on the door moves nothing.
-    const measuring = jointed({ tool: 'measure' })
+    const measuring = jointed({ tool: 'measure', jointDrag: true })
     pointerDown(measuring, pixel([8, 4]))
     pointerMove(pixel([3, 9]))
     pointerUp(pixel([3, 9]))
@@ -1042,7 +1042,7 @@ describe('a press on a part a joint moves', () => {
     const root = new THREE.Group()
     const lid = new THREE.Group()
     root.add(lid)
-    const vp = toolViewport({ tool: null }, fakeViewer({ groups: { '/model/lid': lid } }))
+    const vp = toolViewport({ tool: null, jointDrag: true }, fakeViewer({ groups: { '/model/lid': lid } }))
     vp.jointNodes = new Map([['/model/lid', { joint: LID, loc: LOC }]])
     vp.jointValues = { lid: 10 }
     pickEntity.mockReturnValue({ id: '/model/lid', name: 'lid', point: [5, 6, 8] })
@@ -1063,12 +1063,23 @@ describe('a press on a part a joint moves', () => {
       const [x, y] = camera.project(p)
       return [(x + 1) * 400, (1 - y) * 300]
     }
-    const vp = jointed({ tool: null }, camera)
+    const vp = jointed({ tool: null, jointDrag: true }, camera)
     pickEntity.mockReturnValue({ id: '/model/tray', name: 'tray', point: [0, 0, 0] })
     expect(pointerDown(vp, seen([0, 0, 0])).preventDefault).toHaveBeenCalled()
     pointerMove(seen([12, 0, 16]))
     expect(details(vp, EVENT_JOINTS).map((d) => d.values.tray)).toEqual([expect.closeTo(20, 6)])
     pointerUp(seen([12, 0, 16]))
+  })
+
+  it('leaves the press to the trackball while the motion row\'s switch is off', () => {
+    // Off is where the page starts: the drag on the door turns the view.
+    const vp = jointed({ tool: null })
+    const event = pointerDown(vp, pixel([8, 4]))
+    pointerMove(pixel([3, 9]))
+    pointerUp(pixel([3, 9]))
+    expect(event.preventDefault).not.toHaveBeenCalled()
+    expect(event.stopPropagation).not.toHaveBeenCalled()
+    expect(emitted(vp)).not.toContain(EVENT_JOINTS)
   })
 
   it('leaves a press with a key, on an edge-on hinge or by a finger to the trackball', () => {

@@ -222,6 +222,17 @@ describe('the motion row', () => {
     expect(el.setJoints).toHaveBeenLastCalledWith({ hinge: 0, drawer: 0 })
   })
 
+  it('starts with dragging in the scene off, and hands its switch to the viewport', () => {
+    expect(new HammerolaViewer({}).state.jointDrag).toBe(false)
+    const { c } = page()
+    const seen = listening()
+    c.onModel({ view: 'assembled', tree: TREE, live: false, joints: [HINGE, DRAWER], poses: POSES })
+    c.computed().motionDragClick(click)
+    expect(seen.at(-1).jointDrag).toBe(true)
+    c.computed().motionDragClick(click)
+    expect(seen.at(-1).jointDrag).toBe(false)
+  })
+
   it('takes a drag in the scene by the slider\'s own path', () => {
     // Mounted, so the viewport's event reaches the handler the page listens
     // with; the fetches the mount starts are stubbed.
