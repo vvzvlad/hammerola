@@ -101,9 +101,13 @@ export const btn = (active, hide, off) => `display:flex;align-items:center;gap:6
 export const chip = (show, bg, border, color) => 'pointer-events:auto;display:' + (show ? 'flex' : 'none') + `;align-items:center;gap:8px;padding:7px 12px;background:${bg};border:1px solid ${border};border-radius:7px;font:500 11.5px ${SANS};color:${color};box-shadow:0 2px 8px var(--shadow-soft)`;
 
 /* The toast a build page says how a step went in, over everything else, and
-   how long it stays. */
+   how long it stays. It stands above the bottom bar, not on it: the bar's layer
+   is 12px off the bottom edge and the bar about 35px tall (`BAR_LAYER`,
+   `viewMenuStyle` in viewlist.jsx), so at 56px the toast leaves the buttons
+   under it visible and clickable — Comments among them, right after a comment
+   is sent. */
 export const TOAST_MS = 2600;
-export const toastStyle = (show) => `position:absolute;left:50%;bottom:18px;transform:translateX(-50%);padding:9px 16px;background:var(--tooltip-bg);color:var(--tooltip-text);border-radius:7px;font:500 12px ${SANS};box-shadow:0 6px 20px var(--shadow);z-index:70;display:` + (show ? 'block' : 'none');
+export const toastStyle = (show) => `position:absolute;left:50%;bottom:56px;transform:translateX(-50%);padding:9px 16px;background:var(--tooltip-bg);color:var(--tooltip-text);border-radius:7px;font:500 12px ${SANS};box-shadow:0 6px 20px var(--shadow);z-index:70;display:` + (show ? 'block' : 'none');
 
 /* -- the four icons a tree row is drawn with ------------------------------- */
 //
