@@ -23,7 +23,7 @@ import { COMMENTABLE, docUrl } from './DocumentView.jsx';
 import { PAGE, buildPath, mb, shortId } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { BLANK_BOX, ELLIPSIS, INK, ON_ACCENT, btn, menuRow, tab } from './panelstyle.js';
-import { writeHoverHighlight, writePerspective, writeRetina } from './store.js';
+import { writeHoverHighlight, writePerspective, writeRetina, writeStudio } from './store.js';
 import { MONO, SANS } from './style.jsx';
 import { BAR_LAYER, DOC_LAYER, documentRows, quietBtn, settingsView } from './viewlist.jsx';
 
@@ -126,7 +126,7 @@ export function chromeView(s, props, deps) {
   // schematic or a board's 3D among them, has none.
   const arShown = !!arCapable || !!s.xrCapable;
   const arReady = arShown && views.length > 0 && !docOpen;
-  // Studio (`tStudio`) works where AR does: on a model view, not under a
+  // Settings' Studio mode works where AR does: on a model view, not under a
   // document, which covers the canvas it changes.
   const studioReady = views.length > 0 && !docOpen;
 
@@ -282,14 +282,6 @@ export function chromeView(s, props, deps) {
     arBtn: !arShown ? null : {
       onClick: arReady && !(s.ar && s.ar.busy) ? () => (arCapable ? openAr() : openXr()) : null,
     },
-    // Studio, the model drawn for showing rather than for reading
-    // (`setStudio` in the viewer): no edges, a studio's light, a shadow on the
-    // ground and its own canvas colour. Lit while on; out of service and unlit
-    // where no model view is on screen (`studioReady`), so the bar keeps its
-    // shape (AGENTS.md). The page's own flag, not remembered (`studio`), which
-    // the viewport hears through `sync`.
-    tStudio: studioReady ? () => set({ studio: !s.studio }) : undefined,
-    studioBtnStyle: btn(studioReady && s.studio, false, !studioReady),
     // The strip's one pencil, at its end: it renames the view on screen. One
     // for the whole strip rather than one per pill, so the strip keeps its
     // width and its pills their places from view to view (AGENTS.md).
@@ -461,6 +453,15 @@ export function chromeView(s, props, deps) {
         set({ hoverHighlight: !s.hoverHighlight });
         writeHoverHighlight(!s.hoverHighlight);
       },
+      // Studio, the model drawn for showing rather than for reading
+      // (`setStudio` in the viewer): no edges, a studio's light, a shadow on
+      // the ground and its own canvas colour. Remembered and heard the same
+      // way; out of service where no model view is on screen (`studioReady`).
+      studio: s.studio,
+      onStudio: studioReady ? () => {
+        set({ studio: !s.studio });
+        writeStudio(!s.studio);
+      } : undefined,
       // Whether the header draws its strip of projects: BuildPage's answer and
       // door, since the header belongs to neither page (the theme's way).
       tabStrip: props.tabStrip,

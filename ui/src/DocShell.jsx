@@ -56,7 +56,7 @@ import { dropStaleFocus, feedView } from './feedview.js';
 import { buildKey, buildPath, PAGE, pageVariant } from './hub.js';
 import { BOM_TYPE } from './kicadbom.js';
 import { btn, TOAST_MS, toastStyle } from './panelstyle.js';
-import { readHoverHighlight, readPerspective, readRetina } from './store.js';
+import { readHoverHighlight, readPerspective, readRetina, readStudio } from './store.js';
 import { css, FONTS, NARROW, PAGE_BG, PAGE_FG, SANS } from './style.jsx';
 import {
   BAR_LAYER, DOC_LAYER, documentRows, quietBtn, savePng, settingsCard, settingsView, toolBar,
@@ -95,16 +95,15 @@ const BAR = `${BAR_LAYER}18`;
  * `tools.measure` (KicadView.jsx): there it flips the board's measure mode
  * (`onMeasure`) and is lit while the mode is on. Settings is in service: `settings` holds its
  * flag and toggle (`open`, `onToggle`) and its rows' answers (`settingsView` in
- * viewlist.jsx); with no model here its Retina and Perspective rows are out of
- * service, as they are over a document there. Comment is in service over a
+ * viewlist.jsx); with no model here its Retina, Perspective, Hover highlight
+ * and Studio mode rows are out of service, as they are over a document there. Comment is in service over a
  * document that takes a comment (`COMMENTABLE`), lit while armed (`tool`) and
  * armed or put down by `onComment`; Comment and Add primitive are hidden from
  * a reader without a token (`viewer`), as they are there; Fit and Frame act on
  * the document when its view can do them (`tools`, `onTools` in
  * DocumentView.jsx) and are out of service when it cannot; so is Insets, in
  * service over a KiCad schematic or board whose view hands `tools.insets`
- * (KicadView.jsx) and lit while its mode is on. Studio, about a model, is out
- * of service. A narrow window
+ * (KicadView.jsx) and lit while its mode is on. A narrow window
  * keeps the list and Fit. AR, which only the model's page has, is not drawn
  * here. `onRename(doc)`, with the token, puts a pencil
  * before each row's name (`documentRows`). Pure.
@@ -130,7 +129,7 @@ export function docBar({
     settingsBtnStyle: btn(!!settings.open, false, false),
     ...settingsView({
       open: settings.open, retina: settings.retina, perspective: settings.perspective,
-      hoverHighlight: settings.hoverHighlight,
+      hoverHighlight: settings.hoverHighlight, studio: settings.studio,
       tabStrip: settings.tabStrip, onTabStrip: settings.onTabStrip,
     }),
     fitView: tools ? () => tools.fit() : undefined,
@@ -139,8 +138,6 @@ export function docBar({
     grabFrame: tools ? () => tools.frame().then((blob) => blob && savePng(blob, meta))
       .catch((error) => console.warn('frame', error)) : undefined,
     frameBtnStyle: quietBtn(!tools),
-    // Studio is about a model's canvas, and this page has none.
-    studioBtnStyle: btn(false, false, true),
   };
 }
 
@@ -197,10 +194,11 @@ export default class DocShell extends React.Component {
     // the default one where it has none: what is open.
     this.addressDoc = (at) => pickDocument(this.props.meta.documents, at.doc).id;
     this.state = {
-      // The Retina, Perspective and Hover highlight answers are read once: their
-      // rows are out of service here, so nothing on this page changes them.
+      // The Retina, Perspective, Hover highlight and Studio mode answers are
+      // read once: their rows are out of service here, so nothing on this page
+      // changes them.
       active: this.addressDoc(parse()), viewsOpen: false, settingsOpen: false, retina: readRetina(),
-      perspective: readPerspective(), hoverHighlight: readHoverHighlight(), tools: null,
+      perspective: readPerspective(), hoverHighlight: readHoverHighlight(), studio: readStudio(), tools: null,
       // Read at once and kept current (`componentDidMount`), as the model's
       // page keeps its own.
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
@@ -455,6 +453,7 @@ export default class DocShell extends React.Component {
                       retina: this.state.retina,
                       perspective: this.state.perspective,
                       hoverHighlight: this.state.hoverHighlight,
+                      studio: this.state.studio,
                       tabStrip: this.props.tabStrip,
                       onTabStrip: this.props.onTabStrip,
                     }}

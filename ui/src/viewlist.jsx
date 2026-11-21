@@ -6,7 +6,7 @@
 // which has documents only.
 //
 // THE BAR IS THE SAME EVERYWHERE (`toolBar`): the views, Measure, Insets,
-// Comment, Add primitive, Fit, Studio, Frame and Settings, in that order, over the model, over a
+// Comment, Add primitive, Fit, Frame and Settings, in that order, over the model, over a
 // document and on the page of documents alike. A tool that does not apply to
 // what is on screen keeps its place, out of service (`OFF` in panelstyle.js).
 // While a document is on screen, of whatever type, Download and Copy link for
@@ -307,12 +307,12 @@ const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;
 
 /**
  * The Settings card's values, the same rows on both pages. `open` is the
- * page's flag. `retina`, `perspective` and `hoverHighlight` are the stored
- * answers and `onRetina`, `onPerspective` and `onHoverHighlight` their flips,
- * absent where no model is on screen (under a document, on the documents page):
- * the resolution, the camera and the tint under the cursor are the model's
- * canvas', so there the rows are drawn `OFF`, in their place, as a bar
- * button that does not apply is. `tabStrip` and `onTabStrip` are BuildPage's:
+ * page's flag. `retina`, `perspective`, `hoverHighlight` and `studio` are the
+ * stored answers and `onRetina`, `onPerspective`, `onHoverHighlight` and
+ * `onStudio` their flips, absent where no model is on screen (under a document,
+ * on the documents page): the resolution, the camera, the tint under the cursor
+ * and the Studio look are the model's canvas', so there the rows are drawn
+ * `OFF`, in their place, as a bar button that does not apply is. `tabStrip` and `onTabStrip` are BuildPage's:
  * the strip of projects under the header is about the whole site, so that row
  * is live on every page.
  *
@@ -320,12 +320,14 @@ const settingsBox = (on) => 'width:15px;height:15px;border-radius:4px;flex:none;
  * measured from its left edge would hang out past the bar's end.
  */
 export function settingsView({
-  open, retina, onRetina, perspective, onPerspective, hoverHighlight, onHoverHighlight, tabStrip, onTabStrip,
+  open, retina, onRetina, perspective, onPerspective, hoverHighlight, onHoverHighlight, studio, onStudio,
+  tabStrip, onTabStrip,
 }) {
   const rows = [
     { key: 'retina', label: 'Retina resolution', on: !!retina, onClick: onRetina },
     { key: 'perspective', label: 'Perspective', on: !!perspective, onClick: onPerspective },
     { key: 'hover', label: 'Hover highlight', on: !!hoverHighlight, onClick: onHoverHighlight },
+    { key: 'studio', label: 'Studio mode', on: !!studio, onClick: onStudio },
     { key: 'tabs', label: 'Project tabs', on: !!tabStrip, onClick: onTabStrip && (() => onTabStrip(!tabStrip)) },
   ];
   return {
@@ -376,8 +378,7 @@ export function settingsCard(b) {
  *                and `tMeasure`, `insetsBtnStyle` and `tInsets` (a KiCad
  *                design's inset mode), `commentBtnStyle` and `tComment`,
  *                `proposalBtnStyle` and `tProposal`, `fitBtnStyle` and
- *                `fitView`, `studioBtnStyle` and `tStudio`, `frameBtnStyle`
- *                and `grabFrame`, `settingsBtnStyle` and `tSettings`. A tool
+ *                `fitView`, `frameBtnStyle` and `grabFrame`, `settingsBtnStyle` and `tSettings`. A tool
  *                out of service is drawn `OFF` and takes no click, so its
  *                handler may be absent. And `arBtn`,
  *                `View in AR` beside Fit (`{ onClick }`, `onClick` null out of
@@ -563,10 +564,6 @@ function floatBar(b, menus) {
       )}
       {b.showTools && (
         <div className={TOOL_CLASS}>
-          <div onClick={b.tStudio} title="show the model with a studio's light, without edges" style={css(b.studioBtnStyle)}>
-            <svg width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4"><circle cx="8" cy="7" r="4.2" /><path d="M2.5 13.6h11" /><path d="M5.6 5.4a2.6 2.6 0 0 1 2-1.4" /></svg>
-            {word('Studio')}
-          </div>
           <div onClick={b.grabFrame} title="save the current frame as a PNG" style={css(b.frameBtnStyle)}>
             <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.5"><rect x="1.5" y="4" width="13" height="9.5" rx="1.5" /><circle cx="8" cy="8.7" r="2.6" /></svg>
             {word('Frame')}

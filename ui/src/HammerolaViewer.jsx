@@ -95,7 +95,7 @@ import {
 // The reader's notes, the pointer they were last on and the Settings card's
 // answer: per-reader state, which store.js is the one module to keep.
 import {
-  readNotes, writeNotes, rememberPointer, readRetina, readPerspective, readHoverHighlight,
+  readNotes, writeNotes, rememberPointer, readRetina, readPerspective, readHoverHighlight, readStudio,
 } from './store.js';
 // The proposal: a rough body the reader assembles out of numbers so the agent
 // has something to design against or to copy — the motor the bracket has to
@@ -926,9 +926,7 @@ export default class HammerolaViewer extends React.Component {
       retina: readRetina(),
       perspective: readPerspective(),
       hoverHighlight: readHoverHighlight(),
-      // The bar's Studio (`tStudio` in chromeview.js), for this page only:
-      // not remembered.
-      studio: false,
+      studio: readStudio(),
       // `opsOpen` is the `Add primitive` menu in the floating toolbar, and it is
       // one of these rather than one of the proposal's own fields below for the
       // reason it is written beside `viewsOpen`: it is a menu of the chrome's,
