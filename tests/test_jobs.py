@@ -37,14 +37,15 @@ from loguru import logger
 from src import githttp
 from src import jobs as jobs_module
 from src.app import HOOK_SECRET_HEADER
-from src.buildproc import (STATUS_FAILED, STATUS_LIMITS_ERROR, STATUS_OK,
-                           Limits, run_build)
+from src.buildproc import (STATUS_CRASHED, STATUS_FAILED, STATUS_LIMITS_ERROR,
+                           STATUS_OK, BuildOutcome, Limits, run_build,
+                           run_published)
 from src.jobs import (HANDOVER_ERROR, LOG_TRUNCATED_NOTE, MAX_LOG_BYTES,
                       QUEUE_FULL_ERROR, RESTART_CODE,
                       STATE_BUILDING, STATE_DONE, STATE_FAILED, STATE_QUEUED,
                       STOPPED_ERROR, SUBMIT_ACCEPTED, SUBMIT_STOPPED,
                       WORKER_THREAD_PREFIX, BuildQueue, BuildTask, JobStore,
-                      build_arguments)
+                      PublishedTask, build_arguments, published_arguments)
 from src.store import (DEV_LINK, LEFTOVER_PREFIXES, PAYLOAD_DIGEST_FILE,
                        SOURCE_PREFIX, PublishError, Store, utcnow_iso)
 
@@ -1420,6 +1421,19 @@ def test_stopping_the_pool_takes_the_queued_sources_with_it(tmp_path):
         assert "push again" in record["error"]
 
 
+def test_stopping_the_pool_takes_a_queued_published_task_s_sources_too(tmp_path):
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    pool = BuildQueue(_bare_store(data), jobs)
+    task = _published_task(data, jobs)
+    assert pool.submit(task) == SUBMIT_ACCEPTED
+
+    pool.shutdown()
+
+    assert not task.sources.exists()
+    assert jobs.get(task.job_id)["state"] == STATE_FAILED
+
+
 def test_the_stop_budget_is_spent_by_the_pool_not_by_each_worker(tmp_path,
                                                                  monkeypatch):
     """One deadline for all the workers, not a timeout each.
@@ -1874,6 +1888,8 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
         return call
 
     monkeypatch.setattr(jobs_module, "build_arguments", watched)
+    monkeypatch.setenv("BUILD_ENV_UPLOAD_KEY", "key-for-the-site")
+    monkeypatch.setenv("NOT_FOR_BUILDS", "stays-in-the-hub")
     recorder = CallRecorder()
     hub = hub_factory(build_runner=recorder, kicad_url="http://kicad.invalid:8080")
     assert hub.publish("proj1", "abc123", good_build()).status_code == 201
@@ -1897,12 +1913,82 @@ def test_the_worker_calls_the_real_run_build_the_way_it_is_declared(hub_factory,
                            force=keywords["force"],
                            baseline=keywords["baseline"],
                            distance_cache=keywords["distance_cache"],
-                           kicad_url=keywords["kicad_url"]
+                           kicad_url=keywords["kicad_url"],
+                           environment=keywords["environment"]
                            ) == (args, keywords)
     # The project's own cache, not another project's or a fresh file per build.
     assert keywords["distance_cache"] == hub.store.distance_cache_path("proj1")
     # The KiCad sidecar the hub was configured with, for the build's boards.
     assert keywords["kicad_url"] == hub.server.settings.kicad_url
+    # The operator's `BUILD_ENV_` variables and what the build is for, and
+    # nothing else of the hub's environment.
+    assert keywords["environment"] == {
+        "BUILD_ENV_UPLOAD_KEY": "key-for-the-site",
+        "HAMMEROLA_PROJECT": "proj1", "HAMMEROLA_VARIANT": "main",
+        "HAMMEROLA_REVISION": "abc123"}
+
+
+def _published_outcome(status=STATUS_OK):
+    return BuildOutcome(
+        status=status, pid="proj1", files=(), log="published(): said\n",
+        log_truncated=False, exit_code=0 if status == STATUS_OK else 3,
+        signal=None, duration_seconds=0.01)
+
+
+def _published_task(data, jobs, index=0):
+    sources = data / f"{SOURCE_PREFIX}{index:032x}"
+    sources.mkdir(parents=True)
+    (sources / "model.py").write_text("def published(hub):\n    pass\n")
+    record = jobs.create("proj1", f"c{index}")
+    return PublishedTask(job_id=record["id"], pid="proj1", variant="ceiling",
+                         revision=f"c{index}", sources=sources)
+
+
+@pytest.mark.parametrize("status, code, state", [
+    (STATUS_OK, 200, STATE_DONE),
+    (STATUS_FAILED, 422, STATE_FAILED),
+    (STATUS_CRASHED, 500, STATE_FAILED),
+])
+def test_the_worker_calls_the_real_run_published_the_way_it_is_declared(
+        tmp_path, status, code, state):
+    """The seam of `build_arguments`, for the call of `published()`: bound
+    against `run_published`'s signature, and the job says how it ended."""
+    data = tmp_path / "data"
+    jobs = JobStore(data)
+    seen = []
+
+    def recorder(*args, **keywords):
+        seen.append((args, keywords))
+        return _published_outcome(status)
+
+    pool = BuildQueue(_bare_store(data), jobs, kicad_url="http://kicad.invalid",
+                      build_env={"BUILD_ENV_UPLOAD_KEY": "k"},
+                      published_runner=recorder)
+    task = _published_task(data, jobs)
+    pool.start()
+    try:
+        assert pool.submit(task) == SUBMIT_ACCEPTED
+        deadline = time.monotonic() + 10
+        while (jobs.get(task.job_id)["state"] not in (STATE_DONE, STATE_FAILED)
+               and time.monotonic() < deadline):
+            time.sleep(0.01)
+    finally:
+        pool.shutdown()
+        _await_no_workers()
+
+    [(args, keywords)] = seen
+    inspect.signature(run_published).bind(*args, **keywords)
+    assert (args, keywords) == published_arguments(
+        args[0], "proj1", environment=keywords["environment"],
+        kicad_url=keywords["kicad_url"])
+    assert keywords["environment"] == {
+        "BUILD_ENV_UPLOAD_KEY": "k", "HAMMEROLA_PROJECT": "proj1",
+        "HAMMEROLA_VARIANT": "ceiling", "HAMMEROLA_REVISION": "c0"}
+    assert keywords["kicad_url"] == "http://kicad.invalid"
+    record = jobs.get(task.job_id)
+    assert (record["state"], record["code"]) == (state, code)
+    assert jobs.log(task.job_id) == "published(): said\n"
+    assert not task.sources.exists()
 
 
 def test_a_project_with_no_dev_build_has_no_baseline_to_offer(hub):

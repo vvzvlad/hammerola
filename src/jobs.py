@@ -16,6 +16,9 @@ reads its verdict.
     InspectTask a third: one published build pictured from an angle or two of
                 its parts measured against each other; its product is the log,
                 and a snapshot's picture in the job's own directory
+    PublishedTask a fourth: the `published(hub)` of a model.py, called after its
+                revision was published; it owns its source tree like a
+                BuildTask and its product is the log
     BuildQueue  the pool: a bounded queue and N worker threads that run the
                 build and then publish its output
 
@@ -74,6 +77,7 @@ from src.buildproc import (
     run_build,
     run_compare,
     run_inspect,
+    run_published,
     run_version,
 )
 from src import docsbuild
@@ -224,6 +228,13 @@ BUILD_FAILURE_REASONS = {
 # nothing was built.
 VERSION_FAILURE_REASON = "version.py did not give the project's version"
 
+# The variables the hub sets in the environment of a build and of
+# `published()`, naming what they run for (SPEC 7.5). A revision is the commit's
+# sha, or `dev` for a draft.
+PROJECT_ENV = "HAMMEROLA_PROJECT"
+VARIANT_ENV = "HAMMEROLA_VARIANT"
+REVISION_ENV = "HAMMEROLA_REVISION"
+
 
 @dataclass(frozen=True)
 class BuildTask:
@@ -310,9 +321,27 @@ class InspectTask:
     parts: tuple = ()
 
 
+@dataclass(frozen=True)
+class PublishedTask:
+    """One call of a published revision's `published(hub)`, handed to a worker.
+
+    `sources` is the project's directory checked out of the revision's tree, a
+    tree the worker OWNS as a `BuildTask`'s: removed when the job ends,
+    whichever way it ends, and by a drain that never reaches a worker.
+    `variant` is the branch and `revision` the commit it was published as; both
+    go into the function's environment.
+    """
+
+    job_id: str
+    pid: str
+    variant: str
+    revision: str
+    sources: Path
+
+
 def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
                     baseline: Path | None, distance_cache: Path,
-                    kicad_url: str | None):
+                    kicad_url: str | None, environment: dict):
     """The call the worker makes into `run_build`, written down ONCE.
 
     Every test substitutes the builder, so a test binds this expression
@@ -330,11 +359,28 @@ def build_arguments(sources: Path, staging: Path, pid: str, *, force: bool,
 
     `kicad_url` is the KiCad sidecar the build's `kicadboard` asks for a
     board's exports (the `KICAD_URL` setting).
+
+    `environment` is what the build's environment gets besides its own keys:
+    the hub's `BUILD_ENV_` variables and the project, variant and revision the
+    build is for (`BuildQueue._environment`).
     """
     return (sources, staging), {"pid": pid, "force": force,
                                 "baseline": baseline,
                                 "distance_cache": distance_cache,
-                                "kicad_url": kicad_url}
+                                "kicad_url": kicad_url,
+                                "environment": environment}
+
+
+def published_arguments(sources: Path, pid: str, *, environment: dict,
+                        kicad_url: str | None):
+    """The call the worker makes into `run_published`, written down ONCE.
+
+    The same seam as `build_arguments`, bound by a test against
+    `src.buildproc.run_published`'s signature. `sources` is the task's own
+    tree and `environment` is `build_arguments`'s.
+    """
+    return (sources,), {"pid": pid, "environment": environment,
+                        "kicad_url": kicad_url}
 
 
 def compare_arguments(old_dir: Path, new_dir: Path, pid: str, *,
@@ -672,14 +718,18 @@ class BuildQueue:
     # `workers` and `queue_size` are for tests only (a one-worker pool with a
     # queue of one makes a full queue observable). Made configurable, they
     # belong in `Settings`.
-    def __init__(self, store, jobs: JobStore, *, kicad_url=None,
+    def __init__(self, store, jobs: JobStore, *, kicad_url=None, build_env=None,
                  build_runner=None, compare_runner=None, inspect_runner=None,
-                 workers=MAX_CONCURRENT_BUILDS, queue_size=MAX_QUEUED_JOBS):
+                 published_runner=None, workers=MAX_CONCURRENT_BUILDS,
+                 queue_size=MAX_QUEUED_JOBS):
         self._store = store
         self._jobs = jobs
         # The KiCad sidecar (`KICAD_URL`): handed to every build and asked for
         # each `.glb` the hub makes (`src/docsbuild.py`).
         self._kicad_url = kicad_url
+        # The operator's `BUILD_ENV_` variables (`settings.build_environment`),
+        # for the builds and for `published()`.
+        self._build_env = dict(build_env or {})
         # Injected rather than imported at the call site so a test can drive
         # the whole pipeline without CadQuery, a subprocess or a real model —
         # none of which this class is about.
@@ -691,6 +741,8 @@ class BuildQueue:
                              else compare_runner)
         self._run_inspect = (run_inspect if inspect_runner is None
                              else inspect_runner)
+        self._run_published = (run_published if published_runner is None
+                               else published_runner)
         self._queue: queue.Queue = queue.Queue(maxsize=queue_size)
         self._worker_count = max(1, int(workers))
         self._workers: list[threading.Thread] = []
@@ -710,7 +762,8 @@ class BuildQueue:
             thread.start()
             self._workers.append(thread)
 
-    def submit(self, task: BuildTask | CompareTask | InspectTask) -> str:
+    def submit(self, task: BuildTask | CompareTask | InspectTask
+               | PublishedTask) -> str:
         """Hand a push to the pool. One of the three SUBMIT_ constants.
 
         Checked on both sides of the insertion: a request thread can run through
@@ -845,7 +898,7 @@ class BuildQueue:
                 # A comparison or an inspection owns no tree and no body: what
                 # it reads is in the store and stays there. Only the job has
                 # to be answered.
-                if isinstance(task, BuildTask):
+                if isinstance(task, (BuildTask, PublishedTask)):
                     shutil.rmtree(task.sources, ignore_errors=True)
                 self._jobs.finish(task.job_id, state=STATE_FAILED,
                                   code=RESTART_CODE, error=STOPPED_ERROR)
@@ -862,13 +915,15 @@ class BuildQueue:
             except queue.Empty:
                 continue
             try:
-                # ON THE TYPE OF THE TASK, because the two are different work
-                # with different endings: one publishes a tree and owns it, the
-                # other reads two published ones and owns nothing.
+                # ON THE TYPE OF THE TASK, because they are different work with
+                # different endings: a build publishes a tree and owns it, a
+                # comparison reads two published ones and owns nothing.
                 if isinstance(task, CompareTask):
                     self._compare_and_record(task)
                 elif isinstance(task, InspectTask):
                     self._inspect_and_record(task)
+                elif isinstance(task, PublishedTask):
+                    self._published_and_record(task)
                 else:
                     self._build_and_publish(task)
             except Exception:
@@ -948,7 +1003,9 @@ class BuildQueue:
                     baseline=self._store.dev_metrics_path(task.pid,
                                                           task.variant),
                     distance_cache=self._store.distance_cache_path(task.pid),
-                    kicad_url=self._kicad_url)
+                    kicad_url=self._kicad_url,
+                    environment=self._environment(task.pid, task.variant,
+                                                  task.commit))
                 outcome = self._run_build(*args, **keywords)
                 if outcome.ok:
                     docsbuild.name_views(staging, view_names)
@@ -1041,6 +1098,68 @@ class BuildQueue:
             # a failed build, which may already be published.
             logger.exception(
                 f"job {task.job_id}: could not record how the build ended")
+
+    def _environment(self, pid: str, variant: str, revision: str) -> dict:
+        """What a build or a `published()` gets in its environment on top of
+        its own keys: the `BUILD_ENV_` variables and the three that name what
+        it runs for. The hub's are set last, so no variable of the operator's
+        can stand in for them."""
+        return {**self._build_env, PROJECT_ENV: pid, VARIANT_ENV: variant,
+                REVISION_ENV: revision}
+
+    def _published_and_record(self, task: PublishedTask) -> None:
+        """Call one revision's `published(hub)` and record how it ended.
+
+        It runs here, in the pool, and not in the request that waits for it:
+        the process is one more than the builds the container's memory was
+        sized for, and a worker is what counts them. The tree is the task's
+        and is removed on every path.
+
+        The job's log is the function's own. 422 for a `published()` that
+        raised, 500 for every other bad ending, as a build's. The job's error
+        is the end of the sentence `prereceive` says as a warning: the push is
+        accepted by now.
+        """
+        outcome = None
+        verdict = None
+        try:
+            self._jobs.start(task.job_id)
+            args, keywords = published_arguments(
+                task.sources, task.pid,
+                environment=self._environment(task.pid, task.variant,
+                                              task.revision),
+                kicad_url=self._kicad_url)
+            outcome = self._run_published(*args, **keywords)
+            if outcome.ok:
+                verdict = {"state": STATE_DONE, "code": 200}
+            else:
+                logger.warning(
+                    f"published() {task.pid}/{task.revision} ({task.job_id}) "
+                    f"{outcome.status}")
+                verdict = {
+                    "state": STATE_FAILED,
+                    "code": 422 if outcome.status == STATUS_FAILED else 500,
+                    "error": f"did not finish ({outcome.status})"}
+        except Exception:
+            logger.exception(
+                f"published() {task.pid}/{task.revision} failed")
+            verdict = {"state": STATE_FAILED, "code": 500,
+                       "error": "did not finish (internal error)"}
+        finally:
+            shutil.rmtree(task.sources, ignore_errors=True)
+
+        try:
+            self._jobs.finish(
+                task.job_id,
+                status=None if outcome is None else outcome.status,
+                log=None if outcome is None else outcome.log,
+                log_truncated=False if outcome is None else outcome.log_truncated,
+                duration_seconds=(None if outcome is None
+                                  else outcome.duration_seconds),
+                **verdict)
+        except Exception:
+            logger.exception(
+                f"job {task.job_id}: could not record how published() ended")
 
     def _compare_and_record(self, task: CompareTask) -> None:
         """Compare two published revisions and record what came back.

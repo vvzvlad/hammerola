@@ -538,6 +538,26 @@ def test_the_hook_route_wants_the_secret_and_a_missing_hub_refuses(
     assert refused.stderr.strip() == "hook could not reach the hub"
 
 
+def test_the_post_receive_route_wants_the_secret_and_a_missing_hub_refuses_nothing(
+        hub, tmp_path):
+    reply = hub.request("POST", githttp.POST_HOOK_PATH, content=b"{}",
+                        headers={"X-Hammerola-Token": TOKEN})
+    assert reply.status_code == 403
+
+    hook = Path(githttp.HOOKS_DIR) / "post-receive"
+    silent = subprocess.run(
+        [str(hook)], input="0 1 refs/heads/main\n", capture_output=True,
+        text=True, cwd=tmp_path, timeout=30,
+        env={"PATH": os.environ["PATH"],
+             "HAMMEROLA_POST_HOOK_URL":
+                 "http://127.0.0.1:9/internal/post-receive",
+             "HAMMEROLA_HOOK_SECRET": "x"})
+    # The push is in already: the hook says what it could not do and exits 0.
+    assert silent.returncode == 0
+    assert silent.stderr.strip() == ("warning: the hub could not be reached "
+                                     "after the push; published() was not called")
+
+
 def test_the_archive_routes_are_gone(hub):
     headers = {"X-Hammerola-Token": TOKEN}
     assert hub.request("POST", "/api/v1/publish/gone1", content=b"x",

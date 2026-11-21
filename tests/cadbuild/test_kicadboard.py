@@ -520,7 +520,7 @@ def test_a_filled_drill_a_via_and_an_unplated_hole_show_no_barrel(loaded):
     import numpy as np
 
     board, _, _ = loaded
-    _, _, through = kicadboard._scene((FIXTURES / "board.glb").read_bytes(), board.thickness)
+    _, _, through, _ = kicadboard._scene((FIXTURES / "board.glb").read_bytes(), board.thickness)
     drawn = through[0][through[1]][:, :, :2].mean(axis=1)
     kept = _walls(board.meshes["copper"])[0][:, :, :2].mean(axis=1)
     for (x, y), barrel in (((133, -104), True), ((133, -106.54), True), ((114, -106), True),
@@ -597,6 +597,75 @@ def test_a_kicad_6_footprint_is_read_by_its_fp_text_reference():
     assert (found["reference"], found["side"], found["angle"]) == ("R7", "B", 0.0)
     assert found["pads"]["1"] == kicadboard.Pad(2.0, -2.0, "GND")
     assert found["pads"]["2"].net is None
+
+
+def _flat(record, side, thickness):
+    """A copper mesh's flat triangles on one side of the laminate, n x 3 x 2."""
+    import numpy as np
+
+    corners = record.vertices[record.faces]
+    z = corners[:, :, 2].mean(axis=1)
+    flat = np.ptp(corners[:, :, 2], axis=1) < 1e-6
+    return corners[flat & ((z > thickness) if side == "F" else (z < 0))][:, :, :2]
+
+
+def test_copper_all_is_the_default_and_the_whole_record(loaded):
+    board, _, _ = loaded
+    for records in (board.records("amp"), board.records("amp", copper="all")):
+        mesh = records["amp_copper"]["mesh"]
+        vertices, faces, normals, _ = board.meshes["copper"]
+        assert (mesh.vertices == vertices).all() and (mesh.faces == faces).all()
+        assert (mesh.vertex_normals == pytest.approx(normals))
+
+
+def test_copper_none_has_no_copper_record_and_the_rest_as_they_were(loaded):
+    board, _, _ = loaded
+    whole, none = board.records("amp"), board.records("amp", copper="none")
+    assert sorted(none) == sorted(set(whole) - {"amp_copper"})
+    for key in none:
+        if key == "amp_pcb":
+            continue
+        assert (none[key]["mesh"].vertices == whole[key]["mesh"].vertices).all(), key
+        assert (none[key]["mesh"].faces == whole[key]["mesh"].faces).all(), key
+
+
+def test_copper_pads_keeps_the_pads_and_the_open_holes_and_no_routing(loaded):
+    """The fixture's tracks, SIG's, and its via are in the whole record and not
+    in the pads'; the pads and the barrels of the open plated holes are."""
+    import numpy as np
+
+    board, _, _ = loaded
+    whole = board.records("amp")["amp_copper"]
+    pads = board.records("amp", copper="pads")["amp_copper"]
+    assert pads["color"] == whole["color"] and pads["kind"] == "mock"
+    assert len(pads["mesh"].faces) < len(whole["mesh"].faces)
+    for side, (start, end) in tracks().items():
+        middle = (np.array(start) + end) / 2 * (1, -1)
+        assert _over(_flat(whole["mesh"], side, board.thickness), middle).any(), side
+        assert not _over(_flat(pads["mesh"], side, board.thickness), middle).any(), side
+    # The via's annulus, on the top, is not a pad's.
+    via = np.array([114, -106])
+    for record, expected in ((whole, True), (pads, False)):
+        flat = _flat(record["mesh"], "F", board.thickness)
+        assert np.any(np.hypot(*(flat.mean(axis=1) - via).T) < 1) == expected
+    # Every pad on a net is still there, on its own side (H1's is an unplated hole).
+    for found in board.footprints.values():
+        for pad in (pad for pad in found.pads.values() if pad.net):
+            flat = _flat(pads["mesh"], found.side, board.thickness)
+            near = np.hypot(*(flat.mean(axis=1) - (pad.x, pad.y)).T) < 1.5
+            assert near.any(), (found.reference, pad)
+    corners, _ = _walls((pads["mesh"].vertices, pads["mesh"].faces,
+                         pads["mesh"].vertex_normals, None))
+    centres = corners[:, :, :2].mean(axis=1)
+    assert len(corners) == len(OPEN_HOLES) * BARREL
+    for x, y, drill in OPEN_HOLES:
+        assert (np.hypot(*(centres - (x, y)).T) < drill).sum() == BARREL, (x, y)
+
+
+def test_copper_is_one_of_all_pads_none(loaded):
+    board, _, _ = loaded
+    with pytest.raises(BuildError, match="'all', 'pads', 'none'"):
+        board.records("amp", copper="tracks")
 
 
 def test_a_prefix_that_is_no_catalogue_key_is_refused(loaded):

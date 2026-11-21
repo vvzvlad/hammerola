@@ -127,6 +127,11 @@ def parts():
   kind `mock`, which no gate sees. Everything is already moved by `at`, and a view
   cannot move it again (a mesh refuses `at`): to show the board elsewhere, move the
   other parts. DNP parts are left out.
+  `copper=` says what `<prefix>_copper` keeps: `"all"` (the default) the pads, tracks,
+  zones and vias; `"pads"` the pads alone, with the walls of their open plated holes (no
+  track, zone or via); `"none"` no `<prefix>_copper` at all. Use `"pads"` or `"none"` for
+  a model shown outside, where the board's routing would give the schematic away; any
+  other value is a build error.
 - **`AMP.footprints["H1"]`** is every footprint, those without a 3D model too: `x`, `y`,
   `angle`, `side` (`"F"` or `"B"`), `location` (a `cq.Location` from the footprint's own
   frame, Z out of the side it sits on, into the board's frame), `pads` (number → `x`,

@@ -1,0 +1,54 @@
+#!/usr/bin/env python3
+"""Tell the hub which refs of a push git has written.
+
+git runs this hook (`core.hooksPath`, set in src/githttp.py) after every ref of
+a push has moved. It can refuse nothing, and what it prints reaches the pusher
+as `remote: ...`; it always exits 0.
+
+It posts the ref updates to the hub (`HAMMEROLA_POST_HOOK_URL`, with
+`HAMMEROLA_HOOK_SECRET`; both are in the environment the hub gives
+`git http-backend`) in the pre-receive hook's shape, and prints the answer line
+by line as it comes (`prereceive.run_after`). No read timeout: the answer takes
+as long as the call of a project's `published()`. Standard library only.
+"""
+
+import json
+import os
+import sys
+import urllib.request
+
+UNREACHABLE = ("warning: the hub could not be reached after the push; published() "
+               "was not called")
+
+
+def main() -> int:
+    # Run inside the bare repository, `<pid>.git`, where `$GIT_DIR` is `.`.
+    pid = os.path.basename(os.getcwd()).removesuffix(".git")
+    count = int(os.environ.get("GIT_PUSH_OPTION_COUNT") or 0)
+    body = json.dumps({
+        "pid": pid,
+        "lines": [line.strip() for line in sys.stdin if line.strip()],
+        "quarantine": {},
+        "options": [os.environ.get(f"GIT_PUSH_OPTION_{index}", "")
+                    for index in range(count)],
+    }).encode("utf-8")
+    request = urllib.request.Request(
+        os.environ.get("HAMMEROLA_POST_HOOK_URL", ""), data=body,
+        method="POST",
+        headers={"Content-Type": "application/json",
+                 "X-Hammerola-Hook-Secret":
+                     os.environ.get("HAMMEROLA_HOOK_SECRET", "")})
+    try:
+        opener = urllib.request.build_opener(urllib.request.ProxyHandler({}))
+        with opener.open(request) as answer:
+            for raw in answer:
+                sys.stderr.write(raw.decode("utf-8", "replace").rstrip("\r\n")
+                                 + "\n")
+                sys.stderr.flush()
+    except (OSError, ValueError):
+        sys.stderr.write(UNREACHABLE + "\n")
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

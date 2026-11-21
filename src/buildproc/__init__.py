@@ -3,9 +3,10 @@
 
 The hub EXECUTES untrusted code, and this package is the fence: the model runs
 in a separate, freshly exec'd interpreter, with an environment built key by key
-and holding no credential, under rlimits put on by an outer wrapper, with a
-wall-clock deadline the parent enforces with SIGKILL over the whole process
-group, and with its output captured and capped.
+and holding no credential of the hub's (only what the operator names with
+`BUILD_ENV_`, `src.settings.build_environment`), under rlimits put on by an
+outer wrapper, with a wall-clock deadline the parent enforces with SIGKILL over
+the whole process group, and with its output captured and capped.
 
     limits.py     the ceilings, and the code that puts them on a process
     wrapper.py    `python -m` entry that applies them to itself and execs the child
@@ -13,6 +14,7 @@ group, and with its output captured and capped.
     comparechild.py  `python -m` entry that compares two revisions and prints it
     inspectchild.py  `python -m` entry that pictures or measures one revision
     versionchild.py  `python -m` entry that asks a project's version.py its version
+    publishedchild.py  `python -m` entry that calls a project's published(hub)
     runner.py     the parent: spawn, deadline, kill, capture, CHECK the result
     hardening.py  the one call that runs in the HUB: hide its /proc entry
 
@@ -78,6 +80,7 @@ from src.buildproc.runner import (
     run_compare,
     run_inspect,
     run_isolated,
+    run_published,
     run_version,
 )
 
@@ -107,5 +110,6 @@ __all__ = [
     "run_compare",
     "run_inspect",
     "run_isolated",
+    "run_published",
     "run_version",
 ]

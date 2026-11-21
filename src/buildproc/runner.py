@@ -161,7 +161,7 @@ class BuildOutcome:
 
 def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
               preview_mode="iso", force=False, baseline=None,
-              distance_cache=None, kicad_url=None):
+              distance_cache=None, kicad_url=None, environment=None):
     """Build the model in `project_dir` into `out_dir`, in a process of its own.
 
     `project_dir` is an untrusted tree (SPEC 8A.2 step 2). It contributes only
@@ -184,6 +184,9 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
 
     `kicad_url` is the KiCad sidecar, put into the child's environment for
     `kicadboard` (`child_environment`).
+
+    `environment` is the extra part of the child's environment, under the fixed
+    keys (`child_environment`'s `extra`).
     """
     project_dir = Path(project_dir).resolve()
     out_dir = Path(out_dir).resolve()
@@ -236,7 +239,7 @@ def run_build(project_dir, out_dir, *, pid, limits=DEFAULT_LIMITS,
             target, limits=limits,
             env=child_environment(home=home, tmp=tmp,
                                   threads=limits.occt_threads,
-                                  kicad_url=kicad_url),
+                                  kicad_url=kicad_url, extra=environment),
             guard=_OutputGuard(out_dir, limits))
         return _read_outcome(process, result_path, out_dir=out_dir, pid=pid,
                              limits=limits)
@@ -394,6 +397,47 @@ def run_version(project_dir, *, pid, limits=DEFAULT_LIMITS):
         shutil.rmtree(scratch, ignore_errors=True)
 
 
+def run_published(project_dir, *, pid, environment=None, kicad_url=None,
+                  limits=DEFAULT_LIMITS):
+    """The tree's `published(hub)` called, in a process of its own.
+
+    The sibling of `run_version`: `publishedchild` imports model.py behind the
+    wrapper and calls the function, which is the project's code and does what
+    it likes with the network. Nothing comes back but the log and how it ended.
+
+    `environment` is the extra part of the child's environment: the hub's
+    `BUILD_ENV_` variables, which carry the keys the function uploads with, and
+    the project, variant and revision it was called for. `kicad_url` is there
+    for a view that places a board.
+    """
+    project_dir = Path(project_dir).resolve()
+
+    # HOME and TMPDIR point here, as on the build path: the GLB the function
+    # makes is written under TMPDIR and goes with the scratch. 0700, removed
+    # afterwards.
+    scratch = Path(tempfile.mkdtemp(prefix="hammerola-published-"))
+    try:
+        home = scratch / "home"
+        tmp = scratch / "tmp"
+        for directory in (home, tmp):
+            directory.mkdir(mode=0o700)
+
+        target = [
+            sys.executable, "-s", "-m", "src.buildproc.publishedchild",
+            "--project", str(project_dir),
+            "--occt-threads", str(limits.occt_threads),
+        ]
+        process = run_isolated(
+            target, limits=limits,
+            env=child_environment(home=home, tmp=tmp,
+                                  threads=limits.occt_threads,
+                                  kicad_url=kicad_url, extra=environment),
+            guard=None)
+        return _inspect_outcome(process, pid=pid)
+    finally:
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
 def run_isolated(target_argv, *, limits, env, cwd=None, guard=None):
     """Run `target_argv` behind the wrapper, under `limits`, and capture it.
 
@@ -480,7 +524,7 @@ def run_isolated(target_argv, *, limits, env, cwd=None, guard=None):
     )
 
 
-def child_environment(*, home, tmp, threads, kicad_url=None):
+def child_environment(*, home, tmp, threads, kicad_url=None, extra=None):
     """The child's whole environment, built key by key.
 
     An allowlist, not a filter: a filter must be extended whenever a variable is
@@ -493,6 +537,12 @@ def child_environment(*, home, tmp, threads, kicad_url=None):
     the board's exports the build process already has (`kicadcli.export_cached`);
     `tmp` is the build's scratch, removed with the build, so nothing is kept
     for the next one.
+
+    `extra` is what the hub's operator and the hub itself add on purpose
+    (`settings.build_environment`, the project, variant and revision a build is
+    for): merged UNDER the fixed keys, so no name in it can change what the
+    child's own machinery reads, and it never carries anything of the hub's
+    environment that was not named for it.
     """
     environment = {
         # Fixed, not inherited. Nothing in a build should be resolving a
@@ -536,7 +586,7 @@ def child_environment(*, home, tmp, threads, kicad_url=None):
     if kicad_url is not None:
         environment[KICAD_URL_ENV] = kicad_url
         environment[KICAD_CACHE_ENV] = str(Path(tmp) / "kicad-exports")
-    return environment
+    return {**(extra or {}), **environment}
 
 
 def _read_outcome(process, result_path, *, out_dir, pid, limits):

@@ -2,7 +2,7 @@ import pytest
 from pydantic import ValidationError
 
 from ci.smoke import REQUIRED_VARIABLES
-from src.settings import Settings
+from src.settings import Settings, build_environment
 
 
 def test_the_gate_knows_every_credential_this_declares():
@@ -128,3 +128,19 @@ def test_hub_logo_of_a_wrong_suffix_is_refused_with_its_path(monkeypatch, tmp_pa
     monkeypatch.setenv("HUB_LOGO", str(notes))
     with pytest.raises(ValidationError, match="notes.txt"):
         Settings(_env_file=None)
+
+
+def test_build_environment_is_the_prefixed_variables_under_their_own_names():
+    environ = {"BUILD_ENV_UPLOAD_KEY": "k", "BUILD_ENV_": "bare",
+               "EDIT_TOKEN": "s3cret", "KICAD_URL": "http://kicad",
+               "XBUILD_ENV_NOT": "x", "build_env_lower": "y"}
+
+    assert build_environment(environ) == {"BUILD_ENV_UPLOAD_KEY": "k",
+                                          "BUILD_ENV_": "bare"}
+
+
+def test_build_environment_reads_the_process_environment_by_default(
+        monkeypatch):
+    monkeypatch.setenv("BUILD_ENV_FROM_THE_PROCESS", "yes")
+
+    assert build_environment()["BUILD_ENV_FROM_THE_PROCESS"] == "yes"

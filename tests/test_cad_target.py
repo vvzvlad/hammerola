@@ -1,10 +1,10 @@
-"""`make cad-test` names thirty-five tests by node id, and node ids rot.
+"""`make cad-test` names forty tests by node id, and node ids rot.
 
-The target runs those thirty-five without the rest of the suite, for the edit-run-edit loop
+The target runs those forty without the rest of the suite, for the edit-run-edit loop
 on the export half; CI runs them too, since its test image (`ci/Dockerfile.test`)
 carries the kernel's libraries. The target fails on a missing name only for
 somebody who runs it, so the list is checked here on every run of the ordinary
-suite. This does NOT run the thirty-five (that needs the kernel); it checks that each name
+suite. This does NOT run the forty (that needs the kernel); it checks that each name
 still points at a function.
 """
 
@@ -24,15 +24,15 @@ def _declared_node_ids() -> list[str]:
     text = (ROOT / "Makefile").read_text(encoding="utf-8")
     match = CAD_TESTS_RE.search(text)
     assert match, "the Makefile no longer declares CAD_TESTS; `make cad-test` " \
-                  "is what runs the thirty-five kernel tests on their own (issue #27)"
+                  "is what runs the forty kernel tests on their own (issue #27)"
     body = match.group(1).replace("\\\n", " ")
     return body.split()
 
 
-def test_the_target_still_names_thirty_five_tests():
-    """Thirty-five, and the number is deliberate.
+def test_the_target_still_names_forty_tests():
+    """Forty, and the number is deliberate.
 
-    A thirty-sixth added or a thirty-fifth removed changes what the kernel-backed loop
+    A forty-first added or a fortieth removed changes what the kernel-backed loop
     covers, and neither should happen without somebody reading this line. One of
     them checks that the pieces the revision diff is drawn from stand, in world
     coordinates, on the part they were cut from -- placed with the view leaf's
@@ -47,7 +47,7 @@ def test_the_target_still_names_thirty_five_tests():
     over a laminate shorter than its copper; three load the fixture's plated holes'
     barrels, two over its own laminate and one over a laminate milled through a hole.
     """
-    assert len(_declared_node_ids()) == 35
+    assert len(_declared_node_ids()) == 40
 
 
 def test_every_name_the_target_runs_still_exists():

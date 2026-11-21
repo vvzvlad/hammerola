@@ -585,9 +585,45 @@ def naming_inspector(build_dir, *, pid, kind, view, angle=None, hide=(),
         log_truncated=False, exit_code=0, signal=None, duration_seconds=0.01)
 
 
+def recording_publisher(status=STATUS_OK, log="published(): stub\n",
+                        repos=None):
+    """Stand in for `src.buildproc.run_published`: write down what it was given.
+
+    The real one starts a child that imports the model and calls its
+    `published(hub)`; what the hub owns of that -- when it is called, with
+    which tree and environment, and what a bad ending does to the push -- is
+    the same whoever calls. `.calls` has one entry per call: the pid, the
+    environment, the KiCad address and the text of the model.py in the tree it
+    was handed, read at the moment of the call, since the tree is removed after.
+    With `repos`, the hub's directory of repositories, also `branch`: where the
+    variant's branch stood in the hub's repository at that moment.
+    """
+    calls = []
+
+    def run(project_dir, *, pid, environment=None, kicad_url=None, **_kw):
+        call = {
+            "pid": pid, "environment": environment, "kicad_url": kicad_url,
+            "model": (Path(project_dir) / "model.py").read_text("utf-8"),
+            "tree": Path(project_dir)}
+        if repos is not None:
+            call["branch"] = subprocess.run(
+                ["git", "--git-dir", str(Path(repos) / f"{pid}.git"),
+                 "rev-parse", "--verify", "--quiet",
+                 f"refs/heads/{environment['HAMMEROLA_VARIANT']}"],
+                capture_output=True, text=True).stdout.strip()
+        calls.append(call)
+        return BuildOutcome(
+            status=status, pid=pid, files=(), log=log, log_truncated=False,
+            exit_code=0 if status == STATUS_OK else 3, signal=None,
+            duration_seconds=0.01)
+
+    run.calls = calls
+    return run
+
+
 def start_hub(data_dir, build_runner=None, compare_runner=None,
-              inspect_runner=None, build_workers=None, build_queue_size=None,
-              **kw):
+              inspect_runner=None, published_runner=None, build_workers=None,
+              build_queue_size=None, **kw):
     """Bind, serve on a daemon thread, and hand back a Hub. Caller stops it."""
     server = create_server(
         settings_for(data_dir, **kw),
@@ -596,6 +632,8 @@ def start_hub(data_dir, build_runner=None, compare_runner=None,
                         else compare_runner),
         inspect_runner=(naming_inspector if inspect_runner is None
                         else inspect_runner),
+        published_runner=(recording_publisher() if published_runner is None
+                          else published_runner),
         build_workers=build_workers, build_queue_size=build_queue_size)
     # `shutdown()` blocks until serve_forever notices, which it only does once per
     # poll interval — the 0.5 s default would add half a second to every test that

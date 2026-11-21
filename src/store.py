@@ -737,16 +737,25 @@ class Store:
                       if self.valid_variant(name := line.removeprefix(
                           BRANCH_PREFIX)))
 
-    def _branch_latest(self, pid: str, branch: str, names) -> str | None:
-        """The build of the nearest built commit on `branch`'s first-parent
-        line, among `names`."""
-        for sha, values in _trailed_log(self.repo_dir(pid),
-                                        f"{BRANCH_PREFIX}{branch}",
+    def nearest_build(self, pid: str, rev: str) -> str | None:
+        """The build of the nearest built commit on `rev`'s first-parent line,
+        or None when nothing on it is built."""
+        return self._nearest_built(
+            pid, rev, {meta["commit"] for meta in self.builds_of(pid)})
+
+    def _nearest_built(self, pid: str, rev: str, names) -> str | None:
+        """`nearest_build` among `names`, the builds already listed."""
+        for sha, values in _trailed_log(self.repo_dir(pid), rev,
                                         "--first-parent"):
             name = self._built_name(pid, sha, values, names)
             if name is not None:
                 return name
         return None
+
+    def _branch_latest(self, pid: str, branch: str, names) -> str | None:
+        """The build of the nearest built commit on `branch`'s first-parent
+        line, among `names`."""
+        return self._nearest_built(pid, f"{BRANCH_PREFIX}{branch}", names)
 
     def _tagged(self, pid: str, branch: str, metas) -> set:
         """The tags of `branch` among `metas`: walking its first-parent line

@@ -47,6 +47,7 @@ def _setup(hub):
     cid = hub.post_comment(PID, COMMIT, comment_payload()).json()["id"]
     return {
         "pre-receive": githttp.HOOK_PATH,
+        "post-receive": githttp.POST_HOOK_PATH,
         "title": f"/api/v1/projects/{PID}/title",
         "names": f"/api/v1/projects/{PID}/names",
         "comment": f"/api/v1/comments/{PID}/{COMMIT}",
