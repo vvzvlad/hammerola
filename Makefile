@@ -127,10 +127,10 @@ test: install ## Run both test suites: pytest always, the JS suite when npm is p
 	$(PYTEST)
 	@$(RUN_JS_TESTS)
 
-# --- The thirty-five tests that need the CAD kernel -------------------------
+# --- The thirty-nine tests that need the CAD kernel -------------------------
 # CI runs them too (ci/Dockerfile.test carries the kernel's libraries); this target is
 # for the edit-run loop on the export half. It fails when a test skips, because on a
-# machine without the kernel all thirty-five would skip and pytest would exit 0.
+# machine without the kernel all thirty-nine would skip and pytest would exit 0.
 CAD_TESTS := \
 	tests/cadbuild/test_views.py::test_a_real_export_is_a_document_the_hub_would_accept \
 	tests/test_view_fixture.py::test_the_exporter_still_produces_the_committed_structure \
@@ -166,16 +166,20 @@ CAD_TESTS := \
 	tests/cadbuild/test_kicadboard.py::test_an_open_plated_hole_shows_the_inner_face_of_its_barrel \
 	tests/cadbuild/test_kicadboard.py::test_a_filled_drill_a_via_and_an_unplated_hole_show_no_barrel \
 	tests/cadbuild/test_kicadboard.py::test_a_half_hole_keeps_the_half_of_its_barrel_on_the_board \
+	tests/cadbuild/test_kicadboard.py::test_copper_all_is_the_default_and_the_whole_record \
+	tests/cadbuild/test_kicadboard.py::test_copper_none_has_no_copper_record_and_the_rest_as_they_were \
+	tests/cadbuild/test_kicadboard.py::test_copper_pads_keeps_the_pads_and_the_open_holes_and_no_routing \
+	tests/cadbuild/test_kicadboard.py::test_copper_is_one_of_all_pads_none \
 	tests/buildproc/test_build_child.py::test_the_check_units_take_the_boards_exports_from_the_build
 
 .PHONY: cad-test
-cad-test: install ## Run just the thirty-five tests that need the CAD kernel (CI runs them too)
+cad-test: install ## Run just the thirty-nine tests that need the CAD kernel (CI runs them too)
 	@out=$$($(PYTEST) -q -rs $(CAD_TESTS) 2>&1); status=$$?; \
 	printf '%s\n' "$$out"; \
 	if printf '%s' "$$out" | grep -qi 'skipped'; then \
 		echo ""; \
 		echo "make cad-test: FAILED — a test skipped, so nothing was checked."; \
-		echo "               These thirty-five need the CAD kernel, and it does not import"; \
+		echo "               These thirty-nine need the CAD kernel, and it does not import"; \
 		echo "               on this machine. Install it here, or run this where it"; \
 		echo "               does — CI's test container has it (issue #27)."; \
 		exit 1; \

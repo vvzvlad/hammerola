@@ -128,6 +128,9 @@ LAYER_RECORDS = {"soldermask": "mask", "copper": "copper", "pad": "copper",
                  "via": "copper", "silkscreen": "silk", "PCB": None}
 # The kinds KiCad writes as slabs on the laminate, cut to their outer faces.
 SLAB_KINDS = ("copper", "pad", "via")
+# What `Board.records` keeps of the copper record: all of it, the pads alone
+# (their faces and the walls of the open plated holes), or none.
+COPPER_CHOICES = ("all", "pads", "none")
 # The kind whose colour a record takes: pads are grey in KiCad's GLB, and the
 # copper record is painted as its tracks.
 RECORD_COLOR_KIND = {"mask": "soldermask", "copper": "copper",
@@ -190,8 +193,12 @@ class Board:
     # `parts_<rrggbb>` (the quantised colour), `mask`, `copper` or `silk`.
     laminate: object = dataclasses.field(repr=False)
     meshes: dict = dataclasses.field(repr=False)
+    # What `records(copper="pads")` is cut from, or None when the GLB has no
+    # pads: (the pads' outer faces and their through-faces, both as `_scene`
+    # left them, the board's edge, the edge of the laminate the build keeps).
+    pads: tuple | None = dataclasses.field(default=None, repr=False)
 
-    def records(self, prefix, at=None):
+    def records(self, prefix, at=None, copper="all"):
         """The catalogue entries of this board, all moved by `at` (a
         cq.Location, the identity by default):
 
@@ -200,8 +207,17 @@ class Board:
                                      the board's layers, `mock`, KiCad's colours;
           `<prefix>_parts_<rrggbb>`  the fitted parts, merged by colour, `mock`.
 
+        `copper` is what `<prefix>_copper` keeps: "all" the pads, tracks, zones
+        and vias; "pads" the pads alone, with the walls of their open plated
+        holes; "none" no such record. The last two leave the board's routing
+        out. A board with no copper has no such record whatever `copper` is.
+
         The meshes are moved here because a view refuses `at` on a mesh record.
         """
+        if copper not in COPPER_CHOICES:
+            raise BuildError(
+                f"kicadboard: {self.path}: records({prefix!r}, copper={copper!r}): "
+                f"copper is one of {', '.join(map(repr, COPPER_CHOICES))}")
         import cadquery as cq
         import numpy as np
         import trimesh
@@ -213,7 +229,14 @@ class Board:
         shift = np.array([trsf.Value(i, 4) for i in (1, 2, 3)])
         out = {f"{prefix}_pcb": {"shape": self.laminate.moved(at),
                                  "kind": "hardware", "color": PCB_COLOR}}
-        for name, (vertices, faces, normals, color) in self.meshes.items():
+        meshes = self.meshes
+        if "copper" in meshes and copper != "all":
+            meshes = dict(meshes)
+            if copper == "none" or self.pads is None:
+                del meshes["copper"]
+            else:
+                meshes["copper"] = self._pad_copper(meshes["copper"][3])
+        for name, (vertices, faces, normals, color) in meshes.items():
             mesh = trimesh.Trimesh(vertices=vertices @ rotation.T + shift,
                                    faces=faces,
                                    vertex_normals=normals @ rotation.T,
@@ -232,6 +255,14 @@ class Board:
                 f"kicadboard: {self.path}: {len(out)} records, over the "
                 f"{MAX_PARTS} the hub takes from one build")
         return out
+
+    def _pad_copper(self, color):
+        """The copper record of the pads alone: their outer faces cut by the
+        board's edge, and the walls of the open plated holes from their
+        through-faces, as `load` builds the whole record."""
+        outer, through, edge, kept = self.pads
+        walls = _walls(*_merged(*through), kept, edge)
+        return (*_joined([_on_board(*_merged(*outer), edge), walls]), color)
 
 
 def load(path):
@@ -261,7 +292,7 @@ def load(path):
         (Path(scratch) / "board.step").write_bytes(step)
         laminate = cq.importers.importStep(str(Path(scratch) / "board.step")).val()
     thickness = laminate.BoundingBox().zlen
-    meshes, bounds, through = _scene(glb, thickness)
+    meshes, bounds, through, pads = _scene(glb, thickness)
     tree = _sexpr(source.read_text(encoding="utf-8", errors="replace"))
     footprints, filled, holes = {}, [], []
     for found in _footprints(tree):
@@ -272,10 +303,12 @@ def load(path):
         footprints.setdefault(found["reference"], Footprint(
             location=_location(found, thickness),
             bounds=bounds.get(found["reference"]), **found))
+    kept = edge = None
     if "copper" in meshes:
         *copper, color = meshes["copper"]
         edge = _edge(laminate, thickness, holes)
-        walls = _walls(*through, _edge(laminate, thickness, filled), edge)
+        kept = _edge(laminate, thickness, filled)
+        walls = _walls(*through, kept, edge)
         # Joined, not merged: where a wall meets a pad's face, each keeps its
         # own vertices and normals, and the edge between them stays sharp.
         meshes["copper"] = (*_joined([_on_board(*copper, edge), walls]), color)
@@ -286,7 +319,8 @@ def load(path):
                 f"exported side by side")
     print(f"kicadboard: {path}: {len(bounds)} parts; {exported}; processed in "
           f"{time.monotonic() - started:.1f} s")
-    return Board(str(path), thickness, footprints, laminate, meshes)
+    return Board(str(path), thickness, footprints, laminate, meshes,
+                 None if pads is None else (*pads, edge, kept))
 
 
 def _export(source, fmt, flags, url):
@@ -741,7 +775,9 @@ def _scene(glb, thickness):
 
     -> ({name: (vertices, faces, normals, "#rrggbb")}, {reference: bounds},
     the copper's faces that run through the laminate (`_through`) or None
-    when the GLB has no copper).
+    when the GLB has no copper, and the pads' alone: their outer faces
+    (`_outer`) and their through-faces, neither merged, or None when it has
+    no pads).
     A layer's colour is its material's as KiCad wrote it, which is what its
     own 3D viewer shows; a part's is its material's turned from linear light
     to sRGB (`_srgb`) and put on `COLOR_LEVELS`, so the parts of
@@ -814,13 +850,15 @@ def _scene(glb, thickness):
             extent[top] = (low, high)
     meshes = {record: (*_joined(found), colors[record])
               for record, found in parts.items()}
-    joined, kinds, through = {}, {}, []
+    joined, kinds, through, pads = {}, {}, [], None
     for kind, found in layers.items():
         record = LAYER_RECORDS[kind]
         piece = _joined(found)
         if kind in SLAB_KINDS:
             through.append(_through(*piece, thickness))
             piece = _outer(*piece, thickness)
+            if kind == "pad":
+                pads = (piece, through[-1])
         joined.setdefault(record, []).append(piece)
         kinds.setdefault(record, []).append(kind)
     for record, found in joined.items():
@@ -828,7 +866,8 @@ def _scene(glb, thickness):
         meshes[record] = (*_merged(*_joined(found)), color)
     bounds = {reference: tuple(float(c) for c in (*low, *high))
               for reference, (low, high) in extent.items()}
-    return meshes, bounds, _merged(*_joined(through)) if through else None
+    return (meshes, bounds, _merged(*_joined(through)) if through else None,
+            pads)
 
 
 def _srgb(color):
