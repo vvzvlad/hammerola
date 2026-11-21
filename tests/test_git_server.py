@@ -166,6 +166,8 @@ def test_git_runs_in_a_clean_environment(monkeypatch, tmp_path):
     assert "the-hub-secret" not in env.values()
     assert env["HAMMEROLA_HOOK_URL"] == \
         f"http://127.0.0.1:8000{githttp.HOOK_PATH}"
+    assert env["HAMMEROLA_POST_HOOK_URL"] == \
+        f"http://127.0.0.1:8000{githttp.POST_HOOK_PATH}"
 
 
 def test_the_server_configuration_reaches_receive_pack(hub, monkeypatch):

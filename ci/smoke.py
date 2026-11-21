@@ -31,9 +31,13 @@ carries the code, starts on its own and is packaged as this repo says.
       push) resolves from /app as the `app` account and its rlimits really go on. The suite
       runs it on a checkout and strips ceilings the workstation refuses
       (`tests/buildproc/probes.py`), so it cannot answer this.
-* (j) the git server answers in the image — 200 with the token, 403 without — and the hook
-      that decides a push is there and executable. The suite runs its own git and takes the
+* (j) the git server answers in the image — 200 with the token, 403 without — and the two
+      hooks git runs for a push (the one that decides it, the one that follows it) are there
+      and executable. The suite runs its own git and takes the
       hook from the checkout, so it sees neither git nor the hook missing from the image.
+* (k) `Hub().compress` (src/cadbuild/publish.py) runs Node.js and gltf-transform from the image
+      behind the build wrapper, under the image's own ceilings, and hands back a GLB declaring
+      Draco. The suite's image carries no node, so nothing else ever runs it.
 
 Constraints of this runner
 --------------------------
@@ -71,8 +75,8 @@ IMAGE_ENV = "SMOKE_IMAGE"
 NAME_ENV = "SMOKE_NAME"
 
 # The three containers this gate starts, by suffix on $SMOKE_NAME:
-#   ""      the long-lived one checks (c), (d), (f), (g) and (i) `docker exec` into, started with
-#           a sleeping command; its `sleep` has to outlast the last exec (see IDLE_COMMAND).
+#   ""      the long-lived one checks (c), (d), (f), (g), (i) and (k) `docker exec` into, started
+#           with a sleeping command; its `sleep` has to outlast the last exec (see IDLE_COMMAND).
 #   -guard  the short-lived one started with NO environment for check (b).
 #   -cmd    the one started with the image's REAL command for check (e), which checks (h) and
 #           (j) exec into afterwards. No `--rm`: check (e) reads its logs and state after it
@@ -617,12 +621,15 @@ GIT_MARK = "git-route"
 GIT_URL = "/git/smoke-git.git/info/refs?service=git-upload-pack"
 GIT_ADVERTISEMENT = "application/x-git-upload-pack-advertisement"
 GIT_HOOK = APP_DIR + "/githooks/pre-receive"
+GIT_POST_HOOK = APP_DIR + "/githooks/post-receive"
 # The header the hub reads its token from (`TOKEN_HEADER` in src/app.py).
 TOKEN_HEADER = "X-Hammerola-Token"
 GIT_TARGETS = (
     ("token", "GET {} with the token answers 200 and {}".format(GIT_URL, GIT_ADVERTISEMENT)),
     ("no-token", "...and without the token answers 403"),
     ("hook", "{} is in the image and executable by the `{}` account".format(GIT_HOOK, APP_USER)),
+    ("post-hook", "{} is in the image and executable by the `{}` account".format(
+        GIT_POST_HOOK, APP_USER)),
 )
 
 # Run by the image's own interpreter, as `app`, in the `-cmd` container; stdlib only, with the
@@ -685,6 +692,95 @@ elif not os.access(request["hook"], os.X_OK):
     report("hook", "it is not executable")
 else:
     report("hook", None)
+
+if not os.path.isfile(request["post_hook"]):
+    report("post-hook", "there is no such file")
+elif not os.access(request["post_hook"], os.X_OK):
+    report("post-hook", "it is not executable")
+else:
+    report("post-hook", None)
+"""
+
+# --- check (k): the GLB compressor ---------------------------------------------------------
+# A project's `published(hub)` runs behind the build wrapper, and `hub.compress` starts node
+# there. V8 reserves address space by the gigabyte for WebAssembly, which gltf-transform's Draco
+# encoder is, so RLIMIT_AS is exactly the ceiling that could stop it. The probe compresses a
+# GLB the way that function does: through the wrapper with the image's own
+# `DEFAULT_LIMITS.rlimit_spec()`, as `app` from /app, into the probe container.
+COMPRESS_MARK = "compress"
+COMPRESS_EXTENSION = "KHR_draco_mesh_compression"
+COMPRESS_TARGETS = (
+    ("draco",
+     "`Hub().compress` runs under the image's build ceilings and hands back a GLB declaring "
+     "{}".format(COMPRESS_EXTENSION)),
+)
+# What the probe gives the fenced process before giving up, inside EXEC_TIMEOUT with room for
+# the probe's own start: two interpreter starts, numpy, and node compressing a cube.
+COMPRESS_RUN_SECONDS = 20
+
+# Run by the image's own interpreter, as `app`, from /app, with the marked-line output of checks
+# (h) to (j).
+COMPRESS_PROBE_SOURCE = r"""
+import json
+import subprocess
+import sys
+import traceback
+
+request = json.loads(sys.argv[1])
+
+# The wrapper's target, where `published(hub)` would run: a cube as the one leaf of a view
+# document, through the module's own converter and `Hub().compress`, printing the extensions
+# the compressed GLB declares.
+FENCED = (
+    "import json, struct\n"
+    "from src.cadbuild.publish import Hub, document_glb\n"
+    "corners = [v for x in (0, 10) for y in (0, 10) for z in (0, 10) for v in (x, y, z)]\n"
+    "sides = [0, 1, 3, 0, 3, 2, 4, 6, 7, 4, 7, 5, 0, 4, 5, 0, 5, 1,\n"
+    "         2, 3, 7, 2, 7, 6, 0, 2, 6, 0, 6, 4, 1, 5, 7, 1, 7, 3]\n"
+    "here = [[0.0, 0.0, 0.0], [0.0, 0.0, 0.0, 1.0]]\n"
+    "cube = {'name': 'cube', 'loc': here, 'color': '#4682b4', 'alpha': 1.0,\n"
+    "        'shape': {'vertices': corners, 'triangles': sides}}\n"
+    "glb = Hub().compress(document_glb({'name': 'smoke', 'loc': here, 'parts': [cube]}))\n"
+    "size, = struct.unpack_from('<I', glb, 12)\n"
+    "print(json.dumps(json.loads(glb[20:20 + size]).get('extensionsUsed', [])))\n"
+)
+
+
+def one_line(text):
+    return " | ".join(part.strip() for part in str(text).splitlines() if part.strip())
+
+
+def report(reason):
+    if reason is None:
+        print("{} ok {}".format(request["mark"], request["key"]))
+    else:
+        print("{} bad {} {}".format(request["mark"], request["key"],
+                                    one_line(reason) or "(no detail)"))
+
+
+try:
+    from src.buildproc.limits import DEFAULT_LIMITS
+    run = subprocess.run(
+        [sys.executable, "-s", "-m", "src.buildproc.wrapper",
+         json.dumps(DEFAULT_LIMITS.rlimit_spec()), "--", sys.executable, "-s", "-c", FENCED],
+        stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, timeout=request["timeout"])
+except Exception:
+    report("the wrapper could not be run at all: {}".format(traceback.format_exc()))
+    raise SystemExit(0)
+
+detail = "exit {}; stderr: {}; stdout: {}".format(
+    run.returncode, one_line(run.stderr) or "(nothing)", one_line(run.stdout) or "(nothing)")
+lines = run.stdout.splitlines()
+try:
+    declared = json.loads(lines[-1]) if run.returncode == 0 and lines else None
+except ValueError:
+    declared = None
+if not isinstance(declared, list):
+    report("the fenced process did not report the compressed GLB -- {}".format(detail))
+elif request["extension"] not in declared:
+    report("the compressed GLB declares {} -- {}".format(declared or "no extension", detail))
+else:
+    report(None)
 """
 
 # How many verdicts each probe MUST return, checked before anything is reported. Every probe
@@ -709,6 +805,7 @@ EXPECTED_TARGETS = (
     ("(h) onboarding routes", len(START_ROUTES) + 1),
     ("(i) build ceilings", len(BUILD_TARGETS)),
     ("(j) git server", len(GIT_TARGETS)),
+    ("(k) GLB compressor", len(COMPRESS_TARGETS)),
 )
 
 # The environment the probe and real-command containers run with. The value is invented and
@@ -722,8 +819,8 @@ SMOKE_ENV = [
 # The command the probe container runs instead of the image's own. It still goes through
 # ENTRYPOINT (docker only replaces CMD), so PID 1 is `gosu app sleep 900`, which is what check
 # (c) inspects. The 900 s count from this container's start and must outlast the last exec into
-# it, check (i): in the worst case it starts at 240 s and that exec ends at 735 s, using 495 s.
-# Check (h) execs into the `-cmd` container and costs this nothing.
+# it, check (k): in the worst case it starts at 240 s and that exec ends at 810 s, using 570 s.
+# Checks (h) and (j) exec into the `-cmd` container and cost this nothing.
 IDLE_COMMAND = ["sleep", "900"]
 
 # The first line `main.py` logs. Its presence proves the settings parsed (every required
@@ -753,9 +850,10 @@ STARTUP_MARKERS = (STARTUP_MARKER,)
 #  + 45 (exec: /start routes and the skill archive, into the -cmd container)
 #  + 30 (exec: build wrapper and its ceilings)
 #  + 30 (exec: the git route and the push hook, into the -cmd container)
+#  + 30 (exec: a GLB compressed under the build ceilings)
 #  + 30 (rm probe, finally) + 30 (rm cmd, finally)
-#  = 840 s, 14 minutes. Both workflows allow 15 (900 s); one further exec of 30 s still
-# fits below that, a second means raising `timeout-minutes` in both workflows.
+#  = 870 s, 14.5 minutes. Both workflows allow 15 (900 s); one further exec means raising
+# `timeout-minutes` in both workflows.
 # tests/test_workflow_steps.py reads this line.
 # Three of the `rm`s are pre-run cleanups: a re-run from the Gitea UI keeps the same run id,
 # hence the same $SMOKE_NAME.
@@ -1650,7 +1748,7 @@ def check_build_ceilings(name, blocked=None):
 
 
 def check_git_server(name):
-    """(j) The git server answers in the image, and the hook that decides a push is in it.
+    """(j) The git server answers in the image, and the hooks that decide and follow a push are in it.
 
     Asked of the `-cmd` container, so the hub that answers is the program production runs. Two
     faults of the IMAGE show only here: `git` dropped from the Dockerfile's apt list, after which
@@ -1671,6 +1769,7 @@ def check_git_server(name):
         "token": SMOKE_TOKEN,
         "type": GIT_ADVERTISEMENT,
         "hook": GIT_HOOK,
+        "post_hook": GIT_POST_HOOK,
     })
 
     status, output = docker(
@@ -1695,11 +1794,12 @@ def check_git_server(name):
                 "{}".format(excerpt(output)))))
         elif seen[key] is None:
             rows.append((target, None))
-        elif key == "hook":
+        elif key in ("hook", "post-hook"):
             rows.append((target, (
                 "{}.\n"
                 "  git looks for this hook in `core.hooksPath` (src/githttp.py) and, finding "
-                "none it can run, accepts every push to the hub without a word: the Dockerfile's "
+                "none it can run, skips it (the pre-receive one then accepts every push without a "
+                "word): the Dockerfile's "
                 "`COPY --chmod=0755 githooks/ githooks/` is gone or no longer runs".format(
                     seen[key]))))
         else:
@@ -1709,6 +1809,52 @@ def check_git_server(name):
                 "an image without `git` answers no git request at all, and the suite cannot see "
                 "that, because it runs the test image's own git".format(seen[key]))))
     return rows
+
+
+def check_compressor(name, blocked=None):
+    """(k) `Hub().compress` runs in the image under a build's ceilings and Draco comes out.
+
+    As `app` from /app, like check (i), and into the probe container, whose memory ceiling
+    has room for node beside an interpreter: the `-cmd` container's has not.
+    """
+    targets = [target for _key, target in COMPRESS_TARGETS]
+
+    if blocked is not None:
+        return [(target, blocked) for target in targets]
+
+    (key, target), = COMPRESS_TARGETS
+    request = json.dumps({
+        "mark": COMPRESS_MARK,
+        "key": key,
+        "extension": COMPRESS_EXTENSION,
+        "timeout": COMPRESS_RUN_SECONDS,
+    })
+
+    status, output = docker(
+        ["exec", "-u", APP_USER, "-w", APP_DIR, name, "python", "-c", COMPRESS_PROBE_SOURCE,
+         request],
+        EXEC_TIMEOUT)
+    if status is None:
+        return [(target, "not attempted: " + output)]
+    if status != 0:
+        return [(target, (
+            "the compression probe could not be run (docker exec exited {}). It answers its "
+            "own question and exits 0 whatever the answer, so this is the probe dying:\n"
+            "{}".format(status, excerpt(output))))]
+
+    seen = parse_marked_verdicts(output, COMPRESS_MARK)
+    if key not in seen:
+        return [(target, (
+            "the probe returned no verdict. Full container output:\n{}".format(
+                excerpt(output))))]
+    if seen[key] is None:
+        return [(target, None)]
+    return [(target, (
+        "{}.\n"
+        "  Every project's `published(hub)` that calls `hub.compress` fails the same way, after "
+        "its revision is already published: node or gltf-transform is missing from /opt/gltf, "
+        "or RLIMIT_AS stops V8's WebAssembly memories (`NODE_FLAGS` in "
+        "src/cadbuild/publish.py are what keep them inside it)".format(seen[key])))]
 
 
 def main():
@@ -1734,7 +1880,7 @@ def main():
     guard_rows = check_required_variable_guard(image, guard_name)
 
     try:
-        # One long-lived container serves (c), (d), (f), (g) and (i).
+        # One long-lived container serves (c), (d), (f), (g), (i) and (k).
         remove_container(probe_name)
         start_status, start_output = docker(
             ["run", "-d", "--name", probe_name] + memory_flags(PROBE_MEMORY)
@@ -1764,12 +1910,14 @@ def main():
         # Into the `-cmd` container, so the hub asked is the program production runs.
         start_rows = check_start_routes(cmd_name)
 
-        # The last exec into the probe container, so its `sleep` must outlast this call (see
-        # IDLE_COMMAND).
         build_rows = check_build_ceilings(probe_name, blocked=blocked)
 
         # Into the `-cmd` container, like (h).
         git_rows = check_git_server(cmd_name)
+
+        # The last exec into the probe container, so its `sleep` must outlast this call (see
+        # IDLE_COMMAND).
+        compress_rows = check_compressor(probe_name, blocked=blocked)
     finally:
         # The workflow removes these again under `if: always()` in case this process is killed.
         remove_container(probe_name)
@@ -1778,7 +1926,7 @@ def main():
     # SAME ORDER AS EXPECTED_TARGETS: the pairing is positional, and groups with equal arity
     # could be swapped without any check below noticing.
     produced = (contract_rows, guard_rows, privileges_rows, excluded_rows, startup_rows,
-                cad_rows, required_rows, start_rows, build_rows, git_rows)
+                cad_rows, required_rows, start_rows, build_rows, git_rows, compress_rows)
 
     # Three self-checks, each catching a break the others cannot. `wiring` holds free-text
     # findings about this file's own consistency; `miscounted` holds one entry per probe

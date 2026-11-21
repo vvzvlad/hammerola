@@ -1,0 +1,7 @@
+{
+  "name": "hammerola_gltf",
+  "private": true,
+  "dependencies": {
+    "@gltf-transform/cli": "4.5.1"
+  }
+}

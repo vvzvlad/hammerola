@@ -8,8 +8,8 @@
   3): take a model's source, compute the geometry, gate it, export the
   artefacts and the viewer payload. Kept as a subpackage rather than spread
   through `src/` because it is a different job from serving: nothing in it
-  touches HTTP, the data volume or a credential. Four things import it, and
-  all four are deliberate: `src/buildproc/child.py` does it INSIDE the build
+  touches HTTP, the data volume or a credential. Five things import it, and
+  all five are deliberate: `src/buildproc/child.py` does it INSIDE the build
   process (step 4), `src/buildproc/comparechild.py` does it inside the
   COMPARISON process for the same reason (step 8, issue #10 — the OCCT boolean
   that measures a revision diff costs ~270 MB resident, measured, so it goes
@@ -17,8 +17,9 @@
   because nothing on the comparison path imports cadquery itself),
   `src/buildproc/inspectchild.py` does it inside the process that draws a
   published view or measures between two of its parts (`hammerola snapshot`,
-  `hammerola measure`; `preview_png.render_scene`, `cadbuild/measure.py`), and
-  the root
+  `hammerola measure`; `preview_png.render_scene`, `cadbuild/measure.py`),
+  `src/buildproc/publishedchild.py` does it inside the process that calls a
+  model's `published(hub)` (`cadbuild/publish.py`), and the root
   `checklib.py` shim re-exports one module of
   it under the name every model.py imports (see the next entry). Nothing on the
   serving side imports it, and step 6 did not change that: the gate now runs on the
@@ -47,11 +48,24 @@
   lxml, which the image does not carry, and cadquery's writer puts every mesh
   under one build item and meshes every face apart, unwelded (SPEC §4, the row
   on the `print` view downloaded as 3MF)
+- `src/cadbuild/publish.py` — `Hub`, what a model's `published(hub)` is handed
+  once its revision becomes a variant's `latest`: `glb(view, parts)` reads and
+  tessellates one view with the build's own code and writes it as a GLB on the
+  standard library, `compress(glb)` runs gltf-transform's `optimize` with Draco
+  (SPEC §4, the row on the model for an outside website). Nothing is kept on
+  the hub: both work in a temporary directory and hand back bytes
+- `gltf/` — the pinned `@gltf-transform/cli` that `compress` runs, and the one
+  place node reaches the runtime image: the Dockerfile's `gltf` stage installs it,
+  and the runtime image gets the node binary and its `node_modules` under
+  `/opt/gltf`, off PATH. Node's flags in `publish.NODE_FLAGS` are what keep its
+  WebAssembly inside a build's RLIMIT_AS; check (k) of `ci/smoke.py` compresses
+  through them under the image's own ceilings
 - `src/jobs.py` — the asynchronous half of a push (SPEC 8A.2 step 5): `JobStore`
   is the registry (a directory per job under `data/jobs/`, `job.json` and
   `log.txt` beside it, and `snapshot.png` for a snapshot), `BuildTask` is what
   the pre-receive hook hands over (`src/prereceive.py`), `InspectTask` what a
-  snapshot and a measurement ask, `BuildQueue`
+  snapshot and a measurement ask, `PublishedTask` the call of a model's
+  `published(hub)` at the end of a push whose branch's `latest` moves, `BuildQueue`
   is the bounded queue and the worker threads that build and then publish. At
   start a record that does not parse, names another directory or carries an
   unknown state is logged and skipped, its directory left where it is; jobs a
@@ -101,8 +115,8 @@
   migration. A client that goes away does not stop the backend: the rest of
   its answer is read and dropped, so a push the hub has started finishes.
   The backend and its hook also get the way back to the hub: the loopback
-  address of `/internal/pre-receive` and the secret the process made at start
-  (`hook_environment`). `end_of_request` runs after the backend exits and
+  addresses of `/internal/pre-receive` and `/internal/post-receive` and the
+  secret the process made at start (`hook_environment`). `end_of_request` runs after the backend exits and
   before the connection closes: after a push it moves `latest`, `builds.json`
   and the index after the branch git has just written (`Store.recompute`), for
   every branch: each is a variant, its `latest`, draft slot and `builds.json`
@@ -124,7 +138,9 @@
   host; the process runs in a group of its own so a deadline kills git's https
   helper with it. A failure is kept in memory and printed first by the project's
   next push (`prereceive.run`)
-- `src/prereceive.py` — what the hub answers its own pre-receive hook (issue
+- `src/prereceive.py` — what the hub answers its own pre-receive hook (and,
+  in `run_after`, its post-receive hook: the call of `published()` for each
+  branch whose `latest` the push moves) (issue
   #128): the ref updates of one push, checked in two passes. The first refuses
   without building — a deleted `main` or draft (any other deleted branch is
   queued for `Store.remove_variant`, run once git has deleted it,
@@ -309,15 +325,19 @@
 - `githooks/` — the hooks git runs for a push to a project's repository on the
   hub, found through `core.hooksPath`, which `src/githttp.py` derives from its
   own location (`/app/githooks` in the image, `/src/githooks` in CI's test
-  container). One today: `pre-receive`, which decides nothing — it posts the
+  container). Two: `pre-receive`, which decides nothing — it posts the
   ref updates to the hub over loopback (`HAMMEROLA_HOOK_URL`, with the
   process's secret), prints the answer as it comes and exits on its last line,
-  the verdict (`src/prereceive.py`). THE EXECUTABLE BIT IS LOAD-BEARING:
+  the verdict (`src/prereceive.py`) — and `post-receive`, which runs once git
+  has written the refs, posts them to `HAMMEROLA_POST_HOOK_URL` (the call of
+  the project's `published()`, `prereceive.run_after`), prints the answer and
+  always exits 0. THE EXECUTABLE BIT IS LOAD-BEARING:
   a hook git cannot run, or cannot find, is skipped, and the push is then
-  ACCEPTED without a word. So the file is committed executable, the Dockerfile
-  copies the directory with `COPY --chmod=0755`, and smoke check (j) fails the
-  gate when the hook is missing from the image or not executable by `app` —
-  which the suite cannot see, since it takes the hook from the checkout
+  ACCEPTED without a word. So the files are committed executable, the
+  Dockerfile copies the directory with `COPY --chmod=0755`, and smoke check (j)
+  fails the gate when either hook is missing from the image or not executable
+  by `app` — which the suite cannot see, since it takes the hooks from the
+  checkout
 - `tests/` — pytest. `tests/cadbuild/` is the moved suite and has a `conftest.py`
   of its own: its `isolated_project` fixture is autouse and would otherwise
   chdir every hub test into a scratch project. `tests/client/` has one too, and
@@ -477,8 +497,8 @@
   own, dependencies, and the fact that `model.py` is executed by the hub. It carries no hub address —
   the reader substitutes their own hub; the one address in it is the outside
   image model `references/concept.md` calls
-- `ui/` — the React sources for the browser UI, and one of the three places node
-  is used here (`viewer/` and `ecad-viewer/` below are the others). Built
+- `ui/` — the React sources for the browser UI, and one of the four places node
+  is used here (`viewer/`, `ecad-viewer/` below and `gltf/` above are the others). Built
   twice, by two toolchains that must not disagree: `make ui` for a workstation and the Dockerfile's `ui`
   stage for the image. Nothing under
   `src/` imports or executes anything in it, which is why `make run` and

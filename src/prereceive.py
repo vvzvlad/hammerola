@@ -17,6 +17,14 @@ Two passes over the refs:
   first failed build refuses the push; what published before it stays a
   revision.
 
+Once git has written the refs, the post-receive hook asks `run_after`: a branch
+whose `latest` is about to move because of the push calls the project's
+`published(hub)`, when its model.py defines one; a draft, a rename and a deleted
+branch do not. It runs in the same queue, and what goes wrong in it is a
+`warning:`, never a refusal: the push is in. It is called there, and not before
+the refs move, because only a ref git wrote is what became `latest`: a push that
+git rejects after the hook accepted it has exported nothing.
+
 The line naming a build's address — `published:`, or `unchanged:` for a draft
 whose tree the slot holds — ends with the number of the project's open comments
 and the command that reads them, when there are any (`_comments_note`).
@@ -50,6 +58,7 @@ rewritten; only a tip whose project tree neither the tip's own build nor the
 variant's `latest` holds is built, as a pushed commit is.
 """
 
+import ast
 import json
 import shutil
 import subprocess
@@ -57,6 +66,7 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 
 from loguru import logger
 
@@ -66,7 +76,7 @@ from src.docsbuild import DOCUMENTS_FIELD, VIEWS_FIELD, project_names
 from src.errors import PublishError
 from src.jobs import (HANDOVER_ERROR, QUEUE_FULL_ERROR, STATE_DONE,
                       STATE_FAILED, SUBMIT_ACCEPTED, SUBMIT_QUEUE_FULL,
-                      BuildTask)
+                      BuildTask, PublishedTask)
 from src.render import revision_message
 from src.store import (BRANCH_PREFIX, DEV_LINK, DRAFT_PREFIX, JSON_TMP_PREFIX,
                        MAIN_BRANCH, MAIN_REF, PAYLOAD_DIGEST_FILE,
@@ -108,6 +118,9 @@ FORCE_OPTION = "force"
 VERDICT = "hammerola-verdict: "
 ACCEPTED = "ok"
 REFUSED = "refused"
+
+# Why the pool took no task: it is stopping (`_hand_over`).
+STOPPING = "the hub is stopping"
 
 # How often the answer looks at the job it waits for.
 POLL_SECONDS = 0.05
@@ -413,21 +426,57 @@ def _reuse_draft(store: Store, jobs, repo, pid: str, env: dict, plan: Plan,
     return answer[1]["url"]
 
 
+def _checkout(store: Store, repo, env: dict, tree_ish: str,
+              sources: Path) -> None:
+    """Check `tree_ish` out into `sources`, a directory that does not exist yet."""
+    index = store.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
+    try:
+        sources.mkdir()
+        checkout = dict(env, GIT_INDEX_FILE=str(index))
+        run_git(repo, "read-tree", tree_ish, env=checkout)
+        run_git(repo, "checkout-index", "-a", work_tree=sources,
+                env=checkout, cwd=sources)
+    finally:
+        index.unlink(missing_ok=True)
+
+
+def _hand_over(jobs, builds, job_id: str, task) -> str | None:
+    """Give `task` to the pool. -> None when it was accepted, else the reason
+    it was not; the job is answered either way."""
+    try:
+        outcome = builds.submit(task)
+    except Exception:
+        jobs.finish(job_id, state=STATE_FAILED, code=500,
+                    error=HANDOVER_ERROR)
+        raise
+    if outcome == SUBMIT_QUEUE_FULL:
+        jobs.finish(job_id, state=STATE_FAILED, code=503,
+                    error=QUEUE_FULL_ERROR)
+        return f"hub is busy: {builds.queued()} builds queued"
+    if outcome != SUBMIT_ACCEPTED:
+        return STOPPING
+    return None
+
+
+def _wait(jobs, job_id: str) -> dict:
+    """The job's record once it has ended."""
+    record = jobs.get(job_id)
+    while record["state"] not in (STATE_DONE, STATE_FAILED):
+        time.sleep(POLL_SECONDS)
+        record = jobs.get(job_id)
+    return record
+
+
 def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
            force: bool, say) -> str:
     """Build and publish one ref's target, printing its log. -> the address
     it was published at. Raises Refused."""
     tree_ish = f"{plan.target}:{plan.directory}"
     sources = store.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
-    index = store.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
     handed_over = False
     try:
         try:
-            sources.mkdir()
-            checkout = dict(env, GIT_INDEX_FILE=str(index))
-            run_git(repo, "read-tree", tree_ish, env=checkout)
-            run_git(repo, "checkout-index", "-a", work_tree=sources,
-                    env=checkout, cwd=sources)
+            _checkout(store, repo, env, tree_ish, sources)
             digest = run_git(repo, "rev-parse", tree_ish, env=env).strip()
             message = None if plan.draft else revision_message(run_git(
                 repo, "log", "-1", "--format=%s", plan.target, env=env))
@@ -436,35 +485,19 @@ def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
         say(f"building {plan.target[:12]} for {plan.ref}")
         name = DEV_LINK if plan.draft else plan.target
         job_id = jobs.create(pid, name)["id"]
-        try:
-            outcome = builds.submit(BuildTask(
-                job_id=job_id, pid=pid, commit=name, sources=sources,
-                digest=digest, force=force, message=message,
-                variant=plan.variant))
-        except Exception:
-            jobs.finish(job_id, state=STATE_FAILED, code=500,
-                        error=HANDOVER_ERROR)
-            raise
-        if outcome == SUBMIT_QUEUE_FULL:
-            jobs.finish(job_id, state=STATE_FAILED, code=503,
-                        error=QUEUE_FULL_ERROR)
-            raise Refused(plan.ref,
-                          f"hub is busy: {builds.queued()} builds queued")
-        if outcome != SUBMIT_ACCEPTED:
-            raise Refused(plan.ref, "the hub is stopping; push again")
+        why = _hand_over(jobs, builds, job_id, BuildTask(
+            job_id=job_id, pid=pid, commit=name, sources=sources,
+            digest=digest, force=force, message=message,
+            variant=plan.variant))
+        if why is not None:
+            raise Refused(plan.ref, why + "; push again"
+                          if why == STOPPING else why)
         handed_over = True
     finally:
-        try:
-            index.unlink()
-        except OSError:
-            pass
         if not handed_over:
             shutil.rmtree(sources, ignore_errors=True)
 
-    record = jobs.get(job_id)
-    while record["state"] not in (STATE_DONE, STATE_FAILED):
-        time.sleep(POLL_SECONDS)
-        record = jobs.get(job_id)
+    record = _wait(jobs, job_id)
     for line in (jobs.log(job_id) or "").splitlines():
         say(line)
     # Before the verdict, so a failed build says its duration too.
@@ -472,6 +505,108 @@ def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
     if record["state"] != STATE_DONE:
         raise Refused(plan.ref, record.get("error") or "the build failed")
     return record["build_url"]
+
+
+def run_after(store: Store, jobs, builds, request: HookRequest, say) -> None:
+    """Answer the post-receive hook: call `published(hub)` for every branch
+    whose `latest` the push moves (`_published`), line by line through `say`.
+    Refuses nothing.
+
+    `request` is the hook's call, whose `updates` are the refs git wrote;
+    nothing is in quarantine any more. A deleted ref, a draft and any ref that
+    is not a variant's branch are passed over. A rename (`commit_name`) moves
+    its branch with `git update-ref`, which runs no hook, so it exports nothing:
+    the geometry is the same.
+    """
+    repo = store.repo_dir(request.pid)
+    for old, new, ref in request.updates:
+        variant = ref.removeprefix(BRANCH_PREFIX)
+        if (new != ZERO and ref.startswith(BRANCH_PREFIX)
+                and store.valid_variant(variant)):
+            _published(store, jobs, builds, repo, request.pid, variant, ref,
+                       old, new, say)
+
+
+def _published(store: Store, jobs, builds, repo, pid: str, variant: str,
+               ref: str, old: str, new: str, say) -> None:
+    """Call `published(hub)` of the model.py of the build the variant's
+    `latest` is about to become, printing its log.
+
+    That build is the nearest built commit of `new`'s first-parent line, and
+    the call is made when it is not the nearest built commit of `old`'s, the
+    variant's `latest` before the push (none for a new branch): after a build,
+    after a draft was reused, after the branch moved onto a commit that was
+    built elsewhere, and not when the push leaves `latest` where it is. Read
+    off the ref git gave rather than off the `latest` pointer: any recompute of
+    the project meanwhile (a draft published, a rename) may have moved the
+    pointer onto `new` already. The tree is the build's own, and nothing runs
+    for one whose model.py has no top-level `def published`: importing every
+    model on every push is what this avoids. A failure, git's included, is a
+    `warning:` line and the hub's log, and the next branch is still answered.
+    """
+    build = None
+    try:
+        build = store.nearest_build(pid, new)
+        before = None if old == ZERO else store.nearest_build(pid, old)
+        if build is None or build == before:
+            return
+        tree = _built_tree(store, pid, build)
+        if tree is None or not _defines_published(repo, tree):
+            return
+        why = _call_published(store, jobs, builds, repo, pid, variant, build,
+                              tree, say)
+    except Exception:
+        logger.exception(f"published() {pid} {ref} at {build or new}")
+        why = "was not called: internal error"
+    if why is not None:
+        logger.warning(f"push {pid} {ref}: published() for {variant} at "
+                       f"{build or new}: {why}")
+        say(f"warning: published() for {variant} {why}; the push is in "
+            f"without it")
+
+
+def _call_published(store: Store, jobs, builds, repo, pid: str, variant: str,
+                    build: str, tree: str, say) -> str | None:
+    """Hand `tree` to the pool as a `PublishedTask` and print its log. -> None
+    when `published()` finished, else the end of the sentence saying why not."""
+    sources = store.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
+    handed_over = False
+    try:
+        try:
+            _checkout(store, repo, {}, tree, sources)
+        except subprocess.CalledProcessError as error:
+            return f"was not called: {git_failure(error)}"
+        job_id = jobs.create(pid, build)["id"]
+        refusal = _hand_over(jobs, builds, job_id, PublishedTask(
+            job_id=job_id, pid=pid, variant=variant, revision=build,
+            sources=sources))
+        if refusal is not None:
+            return f"was not called: {refusal}"
+        handed_over = True
+    finally:
+        if not handed_over:
+            shutil.rmtree(sources, ignore_errors=True)
+    say(f"published() for {variant} at {build[:12]}")
+    record = _wait(jobs, job_id)
+    for line in (jobs.log(job_id) or "").splitlines():
+        say(line)
+    if record["state"] == STATE_DONE:
+        return None
+    return record.get("error") or "did not finish"
+
+
+def _defines_published(repo, tree: str) -> bool:
+    """Does the model.py of `tree` define `published` at its top level? False
+    for a tree with no model.py and for one that does not parse. A coroutine
+    function does not count: the child calls `published(hub)` and never awaits
+    it, so its body would not run."""
+    try:
+        source = run_git(repo, "cat-file", "-p", f"{tree}:model.py")
+        module = ast.parse(source)
+    except (subprocess.CalledProcessError, SyntaxError, ValueError):
+        return False
+    return any(isinstance(node, ast.FunctionDef) and node.name == "published"
+               for node in module.body)
 
 
 def commit_name(store: Store, jobs, builds, pid: str, variant: str, kind: str,
@@ -562,13 +697,18 @@ def _same_tree_build(store: Store, repo, pid: str, variant: str, tip: str,
     latest = store.latest_commit(pid, variant)
     if latest is None:
         return None
+    tree = run_git(repo, "rev-parse", f"{tip}:{directory}").strip()
+    return latest if _built_tree(store, pid, latest) == tree else None
+
+
+def _built_tree(store: Store, pid: str, build: str) -> str | None:
+    """The payload digest of a build, which for one pushed through git is the
+    id of the tree of its project directory; None when it has none."""
     try:
-        built = (store.build_dir(pid, latest) / PAYLOAD_DIGEST_FILE).read_text(
+        return (store.build_dir(pid, build) / PAYLOAD_DIGEST_FILE).read_text(
             encoding="utf-8").strip()
     except OSError:
         return None
-    tree = run_git(repo, "rev-parse", f"{tip}:{directory}").strip()
-    return latest if built == tree else None
 
 
 def _publish_renamed(store: Store, repo, pid: str, variant: str, source: str,

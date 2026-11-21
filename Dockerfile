@@ -1,12 +1,21 @@
-# The browser bundle is built in a build-only stage, so node never reaches the runtime
-# image, and the bundle in an image is always the bundle of that image's commit (it is not
-# committed to the repository). The split COPY keeps `npm ci` cached across source edits.
+# The browser bundle is built in a build-only stage, so its toolchain never reaches the
+# runtime image (node itself does, for gltf-transform: the `gltf` stage), and the bundle
+# in an image is always the bundle of that image's commit (it is not committed to the
+# repository). The split COPY keeps `npm ci` cached across source edits.
 FROM node:22-bookworm-slim AS ui
 WORKDIR /ui
 COPY ui/package.json ui/package-lock.json ./
 RUN npm ci
 COPY ui/ ./
 RUN npm run build
+
+# gltf-transform, which `Hub.compress` runs (src/cadbuild/publish.py), installed by the lock
+# in a build-only stage of its own: the runtime image takes node's binary and these modules,
+# and npm stays behind.
+FROM node:22-bookworm-slim AS gltf
+WORKDIR /gltf
+COPY gltf/package.json gltf/package-lock.json ./
+RUN npm ci
 
 FROM python:3.11-slim
 
@@ -67,6 +76,13 @@ RUN useradd -m -u 1000 app
 # does not reinstall the wheels.
 COPY requirements.lock ./
 RUN pip install --no-cache-dir --require-hashes -r requirements.lock
+
+# Node and gltf-transform from the `gltf` stage, at the paths `Hub.compress` calls them by,
+# outside PATH: nothing else in the image runs node. Besides glibc, node links libstdc++ and
+# libgcc_s, which python:3.11-slim already has (its apt depends on them). Check (k) in
+# ci/smoke.py compresses a GLB with them under a build's ceilings.
+COPY --from=gltf /usr/local/bin/node /opt/gltf/node
+COPY --from=gltf /gltf/node_modules /opt/gltf/node_modules
 
 # Runtime state directory. When a named volume is first initialised from this
 # image, docker copies the ownership of this dir — so the volume starts owned by app.

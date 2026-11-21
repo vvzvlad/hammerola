@@ -21,9 +21,9 @@ Only the three requests of git's smart protocol reach the backend
 * reads its output to the end even when the client has gone away and drops
   the rest, so a push the hub has started finishes on the hub;
 * logs its stderr with the project's id;
-* gives git the way back to the hub for the pre-receive hook
-  (`hook_environment`): the loopback address of `/internal/pre-receive` and the
-  secret this process made at start.
+* gives git the way back to the hub for the pre-receive and post-receive hooks
+  (`hook_environment`): the loopback addresses of `/internal/pre-receive` and
+  `/internal/post-receive` and the secret this process made at start.
 """
 
 import re
@@ -54,7 +54,7 @@ HOOKS_DIR = Path(__file__).resolve().parent.parent / "githooks"
 REMOTE_USER = "hammerola"
 
 # Without a hook in `core.hooksPath` git accepts every push without a word;
-# ci/smoke.py checks the image carries it. Push options reach the hook only
+# ci/smoke.py checks the image carries both. Push options reach the hook only
 # when they are advertised (`git push -o force`). Deletions are the hook's to
 # decide: a variant's branch may go, `main` and every other ref may not
 # (`prereceive._look`); `receive.denyDeletes` would refuse the branch after the
@@ -66,9 +66,11 @@ SERVER_CONFIG = (
     ("core.hooksPath", str(HOOKS_DIR)),
 )
 
-# Where the hook posts, on the port the server really listens on: the setting
-# may say 0. The secret goes in `HOOK_SECRET_HEADER` (src/app.py).
+# Where the hooks post, on the port the server really listens on: the setting
+# may say 0. The secret goes in `HOOK_SECRET_HEADER` (src/app.py). The second is
+# the post-receive hook's, called once git has written the refs.
 HOOK_PATH = "/internal/pre-receive"
+POST_HOOK_PATH = "/internal/post-receive"
 
 # The longest line read from either side: a CGI header line from the backend, or
 # the size line of one chunk of the request body.
@@ -118,8 +120,10 @@ def smart_request(method: str, rest: list[str], query: str):
 
 
 def hook_environment(port: int, secret: str) -> dict:
-    """What the pre-receive hook needs to reach this hub."""
+    """What the pre-receive and post-receive hooks need to reach this hub."""
     return {"HAMMEROLA_HOOK_URL": f"http://127.0.0.1:{port}{HOOK_PATH}",
+            "HAMMEROLA_POST_HOOK_URL":
+                f"http://127.0.0.1:{port}{POST_HOOK_PATH}",
             "HAMMEROLA_HOOK_SECRET": secret}
 
 
@@ -327,10 +331,13 @@ def end_of_request(store: Store, request: GitRequest, mirror) -> None:
     /api/v1/projects/<pid>/names`, `prereceive.commit_name`), which
     recomputes the same way. Before that, each variant whose branch the push
     deleted is removed (`Store.remove_variant`): here, once git is done, and
-    not in the hook's answer, which comes before git moves the ref. Last, the
-    project's copy is queued (`Mirror.schedule`) when the hook said a branch
-    moved, with the variants removed: only those, since a branch git did not
-    delete is still there and deleting it in the copy would erase it.
+    not in the pre-receive hook's answer, which comes before git moves the ref.
+    Last, the project's copy is queued (`Mirror.schedule`) when the hook said a
+    branch moved, with the variants removed: only those, since a branch git did
+    not delete is still there and deleting it in the copy would erase it. The
+    post-receive hook has run by then (`prereceive.run_after`); it decides from
+    the refs git wrote, not from `latest`, which another recompute may move at
+    any time.
     """
     if request.path_info.endswith(f"/{RECEIVE_PACK}"):
         removed = []

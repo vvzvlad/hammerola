@@ -182,6 +182,52 @@ board of the project, which the hub exports on every build
   which printer this is for). It fails by `assert cond, "why"` or by
   returning a list of problem strings. A `checks()` that provably holds no check
   fails the build.
+* **`published(hub)`** — optional: what the project does with a revision outside
+  the hub, such as putting its model on a website. Define it at the top level of
+  `model.py`. The hub calls it once git has accepted a push and moved its
+  branches, once for each branch whose `latest` moves — after a build, after a draft's build was taken
+  for the commit, after the branch moved onto a commit built on another branch —
+  with the model of the revision that becomes `latest`; never for a draft, a
+  check worker, a name changed on the page or a push that leaves `latest` where
+  it was. `hub.glb(view, parts)` is one view as GLB bytes, as the viewer shows
+  it: `view` is a dict shaped as an entry of `views()`, `parts` a catalogue
+  shaped as `parts()` returns. `hub.compress(glb)` returns it Draco-compressed
+  and simplified (gltf-transform's `optimize`, with Draco and a simplification
+  error of 0.001). A board shown outside without its routing takes
+  `records(..., copper="none")` or `copper="pads"` (`references/boards.md`). The
+  hub keeps nothing of it: the function sends the bytes on itself, with what the
+  environment gives it — the hub's variables named `BUILD_ENV_*` reach the build
+  and `published()` under the same name, and the hub adds `HAMMEROLA_PROJECT`
+  (the project id), `HAMMEROLA_VARIANT` (the branch) and `HAMMEROLA_REVISION`
+  (the commit; `dev` in the build of a draft). In a build the three name that
+  run: a draft's build taken for a commit saw `dev`, and a build reached by
+  moving a branch saw the branch it was built on, so only `published()` knows
+  the revision for sure. Send with `urllib.request`: the image pins no HTTP
+  client for models, and one a dependency pulls in can go with it. It runs in the build queue under a build's ceilings,
+  in the project's directory, and its output is printed in the push. If it
+  raises, the push still goes in: the output says `warning: published() for
+  <variant> …`, `latest` moves, and what is outside stays as it was; nothing
+  outside is removed with a variant or the project.
+
+  ```python
+  import os
+  import urllib.request
+
+  def parts(copper="all"):
+      return {**AMP.records("amp", at=AMP_AT, copper=copper),
+              "case": {"shape": case(), "kind": "printable"}}
+
+  def published(hub):
+      if os.environ["HAMMEROLA_VARIANT"] != "main":
+          return
+      catalogue = parts(copper="none")
+      glb = hub.compress(hub.glb({"id": "site", "parts": list(catalogue)}, catalogue))
+      urllib.request.urlopen(urllib.request.Request(
+          f'{os.environ["BUILD_ENV_UPLOAD_URL"]}/{os.environ["HAMMEROLA_PROJECT"]}.glb',
+          data=glb, method="PUT",
+          headers={"Authorization": "Bearer " + os.environ["BUILD_ENV_UPLOAD_KEY"]}),
+          timeout=60)
+  ```
 * **`import checklib`** — reusable checks, none of which runs unless you call
   it. Assembly: `pairwise_interference`, `mating_face_flat`,
   `material_under_head`, `swept_clearance` (a moving part through a fixed one),

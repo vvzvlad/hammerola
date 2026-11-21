@@ -30,8 +30,9 @@ import json
 from urllib.parse import urlsplit
 
 from ci.smoke import (BUILD_MARK, BUILD_PROBE_SOURCE, BUILD_TARGETS, CAD_SENTINEL,
-                      EXPECTED_TARGETS, GIT_HOOK, GIT_MARK, GIT_PROBE_SOURCE,
-                      GIT_TARGETS, GIT_URL, SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
+                      COMPRESS_MARK, COMPRESS_PROBE_SOURCE, EXPECTED_TARGETS, GIT_HOOK,
+                      GIT_MARK, GIT_POST_HOOK, GIT_PROBE_SOURCE, GIT_TARGETS, GIT_URL,
+                      SKILL_ARCHIVE_KEY, SKILL_ENTRY, SKILL_URL,
                       START_MARK, START_ORIGIN, START_PROBE_SOURCE,
                       START_ROUTES, TOKEN_HEADER, parse_cad_verdicts,
                       parse_marked_verdicts, parse_start_routes)
@@ -356,6 +357,16 @@ def test_the_git_probe_asks_for_a_request_the_hub_answers():
 
 def test_the_git_probe_looks_for_the_hook_where_the_hub_points_git():
     assert GIT_HOOK.endswith(f"/{githttp.HOOKS_DIR.name}/pre-receive")
+    assert GIT_POST_HOOK.endswith(f"/{githttp.HOOKS_DIR.name}/post-receive")
+
+
+def test_the_git_probe_names_a_target_for_each_hook_the_image_carries():
+    """A hook added under githooks/ without a row in (j) is one the gate never
+    proves is executable."""
+    declared = {key for key, _target in GIT_TARGETS}
+    assert {"hook", "post-hook"} <= declared
+    assert {hook.name for hook in githttp.HOOKS_DIR.iterdir()} == {
+        GIT_HOOK.rsplit("/", 1)[1], GIT_POST_HOOK.rsplit("/", 1)[1]}
 
 
 def test_the_git_probe_answers_every_question_the_gate_declares():
@@ -368,3 +379,18 @@ def test_the_git_probe_answers_every_question_the_gate_declares():
 def test_the_git_probe_has_a_mark_of_its_own():
     """One parser reads all three, so a shared mark would let another probe's lines answer."""
     assert GIT_MARK not in (START_MARK, BUILD_MARK)
+
+
+# -- check (k): the GLB compressor -------------------------------------------------------------
+def test_the_compression_probe_the_image_runs_is_valid_python():
+    """Same reason as check (h)'s: a syntax error here is a red gate about a healthy image."""
+    ast.parse(COMPRESS_PROBE_SOURCE)
+
+
+def test_the_program_the_compression_probe_fences_is_valid_python():
+    """As check (i)'s: a syntax error there is reported as a finding about the image."""
+    ast.parse(probe_constant(COMPRESS_PROBE_SOURCE, "FENCED"))
+
+
+def test_the_compression_probe_has_a_mark_of_its_own():
+    assert COMPRESS_MARK not in (START_MARK, BUILD_MARK, GIT_MARK)

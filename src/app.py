@@ -110,6 +110,9 @@ Routing (SPEC 3, 7.4):
     POST /internal/pre-receive                the hook of that push asking
                                               whether it may go in     the hook's
                                                                        secret
+    POST /internal/post-receive               the hook telling the hub which
+                                              refs git has written     the hook's
+                                                                       secret
 
     POST /api/v1/comments/<pid>/<commit>      leave a comment          EDIT_TOKEN
     POST /api/v1/comments/<pid>/v/<variant>/dev
@@ -169,7 +172,10 @@ objects and runs the pre-receive hook before it moves any ref; the hook posts
 the ref updates to `/internal/pre-receive`, where `src/prereceive.py` checks
 every ref, builds what is to be built in the ordinary queue (`src/jobs.py`) and
 publishes it, streaming the build's log back as the hook's output. A failed
-build refuses the push. Once git has written the ref, the end of the request
+build refuses the push. Once git has written the refs, the post-receive hook
+posts them to `/internal/post-receive`, where each branch whose `latest` is about
+to move calls its project's `published(hub)`, when it has one
+(`prereceive.run_after`); that can refuse nothing. Then the end of the request
 recomputes `latest` from the branch (`githttp.end_of_request`).
 
 Cache-Control is not a detail here, it is the load-bearing half of the URL scheme:
@@ -207,6 +213,7 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
                       CompareTask, InspectTask, JobStore)
 from src.mirror import Mirror, parse_credentials
 from src.multipart import MultipartError, parse_multipart
+from src.settings import build_environment
 from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, LATEST_LINK,
                        MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
                        VARIANT_SEGMENT, VARIANTS_FILE, Store)
@@ -288,8 +295,8 @@ MAX_TITLE_BODY_BYTES = 2 * 1024
 # (`prereceive._rename`).
 RENAMED_KINDS = ("project", "variant", "view", "document")
 
-# The pre-receive hook's call: the ref lines of one push, a few quarantine
-# paths and the push options, as JSON.
+# A hook's call: the ref lines of one push, a few quarantine paths and the push
+# options, as JSON.
 MAX_HOOK_BODY_BYTES = 1024 * 1024
 
 # The header the hook presents the secret in, made by this process at start
@@ -673,6 +680,9 @@ POST_ROUTES = (
     ((tuple(githttp.HOOK_PATH.strip("/").split("/")), 2),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._handle_pre_receive()),
+    ((tuple(githttp.POST_HOOK_PATH.strip("/").split("/")), 2),
+     lambda handler, rest, query, trailing_slash, with_body:
+         handler._handle_post_receive()),
 )
 
 DELETE_ROUTES = (
@@ -1510,23 +1520,24 @@ class HubHandler(BaseHTTPRequestHandler):
                 return call(self, rest, query, path.endswith("/"), True)
         return self._error(404, "not found", {"Connection": "close"})
 
-    def _handle_pre_receive(self):
-        """POST /internal/pre-receive — the hook of a push asking whether it
-        may go in (`githooks/pre-receive`).
+    def _hook_answer(self, hook: str):
+        """What `_handle_pre_receive` and `_handle_post_receive` share: check
+        the secret, read and check the call, and start the text answer.
+        -> `(request, say)`, or None when the call was answered with an error.
 
         Behind the secret this process made at start, which only git's
-        environment carries, so a stray request on the loopback cannot
-        publish; EDIT_TOKEN never reaches git. The answer is text, written as
-        the push goes — building, the build's log, published or the refusal —
-        and its last line is the verdict (`prereceive.VERDICT`).
+        environment carries, so a stray request on the loopback cannot publish;
+        EDIT_TOKEN never reaches git. The answer is text, written as the push
+        goes; `say` writes one line of it.
         """
         presented = self.headers.get(HOOK_SECRET_HEADER, "")
         if not hmac.compare_digest(presented.encode("utf-8"),
                                    self.server.hook_secret.encode("utf-8")):
-            logger.warning(f"refused: a pre-receive call without this hub's "
+            logger.warning(f"refused: a {hook} call without this hub's "
                            f"secret from {self.address_string()}")
-            return self._error(TOKEN_REFUSED_STATUS, "not this hub's hook",
-                               {"Connection": "close"})
+            self._error(TOKEN_REFUSED_STATUS, "not this hub's hook",
+                        {"Connection": "close"})
+            return None
         body = self._take_body(MAX_HOOK_BODY_BYTES,
                                too_large="the hook's call is too large")
         if body is None:
@@ -1534,7 +1545,8 @@ class HubHandler(BaseHTTPRequestHandler):
         try:
             request = prereceive.parse(body, self.server.store)
         except ValueError as error:
-            return self._error(400, str(error), {"Connection": "close"})
+            self._error(400, str(error), {"Connection": "close"})
+            return None
 
         self.send_response(200)
         self.send_header("Content-Type", "text/plain; charset=utf-8")
@@ -1557,6 +1569,20 @@ class HubHandler(BaseHTTPRequestHandler):
             except OSError:
                 present = False
 
+        return request, say
+
+    def _handle_pre_receive(self):
+        """POST /internal/pre-receive — the hook of a push asking whether it
+        may go in (`githooks/pre-receive`).
+
+        The answer is the push as it goes — building, the build's log,
+        published or the refusal — and its last line is the verdict
+        (`prereceive.VERDICT`).
+        """
+        answer = self._hook_answer("pre-receive")
+        if answer is None:
+            return None
+        request, say = answer
         try:
             accepted = prereceive.run(self.server.store, self.server.jobs,
                                       self.server.builds,
@@ -1569,6 +1595,26 @@ class HubHandler(BaseHTTPRequestHandler):
             accepted = False
         say(prereceive.VERDICT
             + (prereceive.ACCEPTED if accepted else prereceive.REFUSED))
+        return None
+
+    def _handle_post_receive(self):
+        """POST /internal/post-receive — the hook telling the hub which refs
+        git has written (`githooks/post-receive`).
+
+        The answer is the call of each branch's `published()` and its log, and
+        has no verdict: the push is in, and nothing here can refuse it.
+        """
+        answer = self._hook_answer("post-receive")
+        if answer is None:
+            return None
+        request, say = answer
+        try:
+            prereceive.run_after(self.server.store, self.server.jobs,
+                                 self.server.builds, request, say)
+        except Exception:
+            logger.exception(f"push {request.pid}: the refs it wrote could "
+                             f"not be announced")
+            say("the hub failed while announcing this push")
         return None
 
     def _handle_compare(self, rest: list[str]):
@@ -2273,17 +2319,18 @@ class HubHandler(BaseHTTPRequestHandler):
         return bytes(chunks), None
 
 def create_server(settings, *, build_runner=None, compare_runner=None,
-                  inspect_runner=None, build_workers=None,
-                  build_queue_size=None) -> ThreadingHTTPServer:
+                  inspect_runner=None, published_runner=None,
+                  build_workers=None, build_queue_size=None
+                  ) -> ThreadingHTTPServer:
     """Bind the listening socket and return the server, not yet serving.
 
     Binding here lets a test ask for port 0 and read back the real port.
 
-    `build_runner`, `compare_runner`, `inspect_runner`, `build_workers` and
-    `build_queue_size` are test seams, not configuration: they replace
-    `src.buildproc.run_build` / `run_compare` / `run_inspect` and the
-    `src.jobs` defaults so a test can drive the pipeline without CadQuery or
-    observe a full queue.
+    `build_runner`, `compare_runner`, `inspect_runner`, `published_runner`,
+    `build_workers` and `build_queue_size` are test seams, not configuration:
+    they replace `src.buildproc.run_build` / `run_compare` / `run_inspect` /
+    `run_published` and the `src.jobs` defaults so a test can drive the
+    pipeline without CadQuery or observe a full queue.
     """
     store = Store(data_dir=settings.data_dir)
     # A separate tree: a comment must not inherit a build directory's
@@ -2304,9 +2351,11 @@ def create_server(settings, *, build_runner=None, compare_runner=None,
     if build_queue_size is not None:
         extra["queue_size"] = build_queue_size
     builds = BuildQueue(store, job_store, kicad_url=settings.kicad_url,
+                        build_env=build_environment(),
                         build_runner=build_runner,
                         compare_runner=compare_runner,
-                        inspect_runner=inspect_runner, **extra)
+                        inspect_runner=inspect_runner,
+                        published_runner=published_runner, **extra)
 
     # Its thread starts with the first copy, so a bind that fails leaves none.
     mirror = Mirror(parse_credentials(settings.mirror_credentials or ""), store)

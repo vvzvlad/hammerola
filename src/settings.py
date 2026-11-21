@@ -1,3 +1,4 @@
+import os
 from pathlib import Path
 
 from pydantic import Field, field_validator
@@ -131,6 +132,20 @@ class Settings(BaseSettings):
     log_level: str = "INFO"
 
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+
+
+# What the operator hands to the builds and to `published()` on purpose: every
+# variable of the hub's environment that starts with this prefix, under the same
+# name. A hub's own secrets are not named like that, so nothing reaches a model
+# that was not meant to (SPEC 7.5).
+BUILD_ENV_PREFIX = "BUILD_ENV_"
+
+
+def build_environment(environ=os.environ) -> dict:
+    """The `BUILD_ENV_` variables of `environ`: what `child_environment` adds
+    to a build's environment."""
+    return {name: value for name, value in environ.items()
+            if name.startswith(BUILD_ENV_PREFIX)}
 
 
 # Build settings with clear startup errors: a missing/invalid variable prints a
