@@ -20,7 +20,7 @@ import time
 
 from .artifacts import ASSEMBLED_VIEW_ID, PRINT_VIEW_ID
 from .errors import BuildError
-from .geometry import as_shapes
+from .geometry import as_shapes, mesh_extent
 from .palette import INVISIBLE_ALPHA
 from .parts import KIND_MOCK, KIND_PRINTABLE, printable_keys
 
@@ -84,6 +84,17 @@ def _bodies(node, vid):
     """
     shapes = as_shapes(node["shape"], f"view {vid!r} part {node['label']}")
     return shapes, [shape.BoundingBox() for shape in shapes]
+
+
+def _boxes(node, vid):
+    """The boxes of a leaf: a mesh's own placed bounds, else its bodies' boxes.
+
+    A mesh leaf carries no `shape` and its trimesh is already where the view
+    puts it (`views._placed_mesh`), so its box is its `bounds`.
+    """
+    if node["mesh"] is not None:
+        return [mesh_extent(node["mesh"])]
+    return _bodies(node, vid)[1]
 
 
 def _overlap(a, b):
@@ -159,8 +170,7 @@ def check_print_layout(prepared, catalogue):
         # `as_shape` (`obj.val()` only), and `views._placed` runs `as_shapes`
         # only when the reference has an `at`. So a bare reference whose stack
         # holds a non-geometry second item is caught here, by part name.
-        _, boxes = _bodies(node, PRINT_VIEW_ID)
-        for box in boxes:
+        for box in _boxes(node, PRINT_VIEW_ID):
             entries.append((index, node, box))
 
     problems = []
@@ -306,6 +316,10 @@ def check_interference(prepared, catalogue):
     Intended interference (a thread biting into its seat, a barb in a tube, an
     insert melted into its hole) is declared with a reason, printed here.
 
+    A pair with a MESH on either side is not tested either -- the gate measures
+    solids, and a trimesh is triangles -- and the count of such pairs is
+    printed, so the log says what went unmeasured.
+
     A `mock` is not material and is not asked about: a pair with a mock on
     either side is skipped. Mocks are scenery (the wall a bracket bolts to)
     and overlap the product by construction; declaring each would bury the
@@ -342,18 +356,25 @@ def check_interference(prepared, catalogue):
     # AddOptimal_s (see PRINT_OVERLAP_TOL), and mocks are typically heavy
     # (an imported STEP of a wall or a board).
     scenery = [catalogue[node["key"]]["kind"] == KIND_MOCK for node in nodes]
-    # One resolution per node (see `_bodies`). Mocks are not resolved: their
-    # geometry is still validated by `assembly.assembled_shape` and
-    # `views.export_views`. Skipping them also keeps a mesh leaf (shape None)
-    # away from `as_shapes`; only a mock may be a mesh
-    # (`parts.read_catalogue`), so this is the whole guard.
-    resolved = [None if is_scenery else _bodies(node, ASSEMBLED_VIEW_ID)
-                for node, is_scenery in zip(nodes, scenery)]
+    # A mesh has no solid to put a boolean to, so a pair with one in it is
+    # never measured. It is counted instead, and said once below.
+    meshed = [node["mesh"] is not None for node in nodes]
+    # One resolution per node (see `_bodies`). Mocks and meshes are not
+    # resolved: a mock's geometry is still validated by
+    # `assembly.assembled_shape` and `views.export_views`, and a mesh leaf has
+    # no `shape` for `as_shapes` to read.
+    resolved = [None if is_scenery or is_mesh else _bodies(node,
+                                                           ASSEMBLED_VIEW_ID)
+                for node, is_scenery, is_mesh in zip(nodes, scenery, meshed)]
     problems = []
     tested = 0
+    unmeasured = 0
     for i in range(len(nodes)):
         for j in range(i + 1, len(nodes)):
             if scenery[i] or scenery[j]:
+                continue
+            if meshed[i] or meshed[j]:
+                unmeasured += 1
                 continue
             if frozenset((nodes[i]["key"], nodes[j]["key"])) in allowed:
                 continue
@@ -391,6 +412,9 @@ def check_interference(prepared, catalogue):
     # table is for the model's own checks(); this gate runs before them.
     print(f"  {ASSEMBLED_VIEW_ID}: {tested} pair(s) needed a boolean, "
           f"{len(allowed)} declared, {time.monotonic() - started:.1f}s")
+    if unmeasured:
+        print(f"  {ASSEMBLED_VIEW_ID}: {unmeasured} pair(s) with a mesh not "
+              "tested for interference")
     if problems:
         listed = "\n".join(problems)
         raise BuildError(

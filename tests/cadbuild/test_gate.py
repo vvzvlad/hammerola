@@ -769,25 +769,56 @@ def test_no_bounding_box_is_taken_for_a_mock():
     assert body.measured == 1
 
 
-def test_a_mesh_is_never_resolved_by_the_interference_gate(capsys):
-    """The kind filter is the whole of what keeps a trimesh out of `as_shapes`.
-
-    A mesh leaf carries no `shape` at all, so `_bodies` on one would refuse the
-    build -- `as_shapes` asks for `isValid()` and a mesh has none. Scenery is
-    decided before any node is resolved (`check_interference`), and only a mock
-    may be a mesh (`parts.read_catalogue`), so the two rules meet here: this
-    test passing IS the proof that nothing looked.
-    """
+def test_a_mesh_is_never_resolved_and_its_pairs_are_counted(capsys):
+    """A mesh leaf carries no `shape`, so `_bodies` on one would refuse the
+    build -- `as_shapes` asks for `isValid()` and a mesh has none. This passing
+    IS the proof that nothing looked. The pair that was skipped is said once,
+    and the pairs scenery excuses are not part of that count."""
     check_interference(
-        [view("assembled", [node("body", solid(0)), node("scan", Mesh())])],
-        catalogue(body="printable", scan=("mock", Mesh())))
-    assert "0 pair(s) needed a boolean" in capsys.readouterr().out
+        [view("assembled", [node("body", solid(0)), node("scan", Mesh()),
+                            node("wall", Mesh())])],
+        catalogue(body="printable", scan=("printable", Mesh()),
+                  wall=("mock", Mesh())))
+    out = capsys.readouterr().out
+    assert "0 pair(s) needed a boolean" in out
+    assert "assembled: 1 pair(s) with a mesh not tested for interference" in out
 
 
-def test_a_mesh_on_the_plate_is_refused_before_anything_resolves_it():
-    """The plate refuses every kind but `printable`, and a mesh can only be a
-    mock -- so the refusal is the ordinary one and it arrives before the boxes,
-    which is what keeps a trimesh out of `_bodies` here too."""
+def test_a_view_without_a_mesh_says_nothing_about_untested_pairs(capsys):
+    check_interference(
+        [view("assembled", [node("a", solid(0)), node("b", solid(50))])],
+        catalogue(a="printable", b="printable"))
+    assert "not tested for interference" not in capsys.readouterr().out
+
+
+def box_mesh(x, size=10.0):
+    """A real trimesh box standing on the bed from `x`, like `part(x=x)`."""
+    trimesh = pytest.importorskip(
+        "trimesh", exc_type=ImportError,
+        reason="the gate reads a real mesh's bounds")
+    return trimesh.creation.box(
+        extents=(size,) * 3, transform=trimesh.transformations.translation_matrix(
+            (x + size / 2, size / 2, size / 2)))
+
+
+def test_a_printable_mesh_on_the_plate_is_judged_on_its_bounds():
+    """The mesh leaf is already placed, so its box is its `bounds`: standing in
+    the solid is refused and standing clear passes, as for two solids."""
+    cat = catalogue(body="printable", scan=("printable", Mesh()))
+    inside = [view("print", [node("body", part(0, 0)),
+                             node("scan", box_mesh(5.0))])]
+    with pytest.raises(BuildError) as exc:
+        check_print_layout(inside, cat)
+    assert "standing inside each other" in str(exc.value)
+    assert "'body'" in str(exc.value) and "'scan'" in str(exc.value)
+
+    clear = [view("print", [node("body", part(0, 0)),
+                            node("scan", box_mesh(50.0))])]
+    check_print_layout(clear, cat)
+
+
+def test_a_mesh_mock_on_the_plate_is_refused_as_a_mock():
+    """The kind rule is the ordinary one and arrives before the boxes."""
     prepared = [view("print", [node("body", part(0, 0)),
                                node("scan", Mesh())])]
     with pytest.raises(BuildError) as exc:

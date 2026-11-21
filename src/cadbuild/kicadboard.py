@@ -65,6 +65,7 @@ from pathlib import Path
 
 from .. import kicadcli
 from .errors import BuildError
+from .geometry import location_matrix
 from .hubspec import MAX_PARTS, MEMBER_RE
 from .paths import project_root
 
@@ -212,7 +213,7 @@ class Board:
         holes; "none" no such record. The last two leave the board's routing
         out. A board with no copper has no such record whatever `copper` is.
 
-        The meshes are moved here because a view refuses `at` on a mesh record.
+        `at` moves the laminate and every mesh.
         """
         if copper not in COPPER_CHOICES:
             raise BuildError(
@@ -223,10 +224,8 @@ class Board:
         import trimesh
 
         at = cq.Location() if at is None else at
-        trsf = at.wrapped.Transformation()
-        rotation = np.array([[trsf.Value(i, j) for j in (1, 2, 3)]
-                             for i in (1, 2, 3)])
-        shift = np.array([trsf.Value(i, 4) for i in (1, 2, 3)])
+        matrix = np.array(location_matrix(at))
+        rotation, shift = matrix[:3, :3], matrix[:3, 3]
         out = {f"{prefix}_pcb": {"shape": self.laminate.moved(at),
                                  "kind": "hardware", "color": PCB_COLOR}}
         meshes = self.meshes

@@ -250,17 +250,44 @@ def test_a_mesh_reference_makes_a_leaf_that_holds_the_mesh_and_no_shape():
     assert mesh["shape"] is None and mesh["mesh"] is not None
 
 
-def test_at_on_a_mesh_is_refused():
-    """`_placed` applies `at` with `Shape.moved()`, which a trimesh has no
-    answer for -- so the mesh is transformed where it is loaded, and the message
-    says with what."""
-    with pytest.raises(BuildError) as exc:
-        prepare([one_view(parts=["body", {"part": "scan",
-                                          "at": Location(10, 0, 0)}])],
-                with_a_mesh())
-    message = str(exc.value)
-    assert '"at" was given for a mesh' in message
-    assert "apply_transform" in message
+def a_trimesh_box():
+    trimesh = pytest.importorskip(
+        "trimesh", exc_type=ImportError,
+        reason="the transform under test is the real mesh class's")
+    return trimesh.creation.box(extents=(2.0, 4.0, 6.0))
+
+
+def test_at_on_a_mesh_places_a_copy_and_leaves_the_catalogue_mesh_alone():
+    """`at` is read off the Location's 4 x 4 matrix and applied to a COPY: the
+    catalogue's mesh is what `<key>.stl` is written from, and the other
+    references to the key stand where they stood."""
+    scan = a_trimesh_box()
+    before = scan.vertices.copy()
+    at = Location(10.0, 0.0, 0.0, rows=turned(90, "z").rows)
+    prepared = prepare([one_view(parts=["body", {"part": "scan", "at": at},
+                                        "scan"])], with_a_mesh(scan))
+    _, placed, bare = prepared[0]["nodes"]
+
+    # A quarter turn about Z swaps the X and Y extents, then the shift of 10.
+    assert placed["mesh"] is not scan
+    assert np.allclose(placed["mesh"].bounds,
+                       [[8.0, -1.0, -3.0], [12.0, 1.0, 3.0]])
+    assert np.array_equal(scan.vertices, before)
+    # Copied only when `at` is given, and the `at` stays on the leaf: the
+    # plate's 3MF applies it to the key's STL.
+    assert bare["mesh"] is scan
+    assert placed["at"] is at and bare["at"] is None
+
+
+def test_a_vector_at_shifts_a_mesh_as_it_shifts_a_solid():
+    """`Shape.moved(Vector)` is a pure shift, and so is the mesh's copy."""
+    scan = a_trimesh_box()
+    prepared = prepare([one_view(parts=["body", {"part": "scan",
+                                                 "at": Vector(10, 0, 0)}])],
+                       with_a_mesh(scan))
+    placed = prepared[0]["nodes"][1]["mesh"]
+
+    assert np.allclose(placed.bounds, scan.bounds + [10.0, 0.0, 0.0])
 
 
 def test_the_deformed_hatch_is_shut_over_a_mesh_entry():

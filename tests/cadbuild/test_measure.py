@@ -79,7 +79,8 @@ def test_a_pair_with_a_part_that_has_no_step_is_measured_on_the_mesh(
     assert found["point_a"][1] == pytest.approx(NEAR_A)
     assert found["point_b"][1] == pytest.approx(NEAR_B)
     lines = measure.describe(found)
-    assert lines[0].startswith("method: the view's mesh -- b is not printable")
+    assert lines[0].startswith("method: the view's mesh -- the revision holds "
+                               "no STEP of b (only a printable solid has one)")
     assert lines[1] == "distance: 2.500 mm, between a and b"
     # (10 + 10 + 10) / 300 * 0.1 for each box.
     assert lines[-2].endswith(

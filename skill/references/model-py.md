@@ -70,9 +70,11 @@ board of the project, which the hub exports on every build
   of records, `{"lid": {"shape": <CadQuery object>, "kind": "printable"}}`, with
   `color` and `note` optional. Instead of `shape` a record may carry `mesh`, a
   `trimesh.Trimesh` the model loaded (`trimesh.load("ref/scan.stl",
-  force="mesh")`) to show somebody else's geometry: it must be a `mock`, nothing
-  is exported from it, and `at` is refused on it — place it with
-  `mesh.apply_transform(...)`. **The key IS the part's identity**: its export
+  force="mesh")`): somebody else's geometry as a `mock`, or a part made
+  elsewhere (a Blender sculpt) as a `printable`, which is exported as
+  `<key>.stl` and `<key>.3mf` and has no STEP. A mesh is never `hardware`. `at`
+  on a reference moves a copy of the mesh, as it moves a solid; the catalogue's
+  mesh stays where it was loaded. **The key IS the part's identity**: its export
   stem, its row in the viewer's tree, what views point at, its entry in
   `meta.json`; there is no display name. Letters, digits, dot, dash and
   underscore, a letter or digit first, up to 128 characters; `assembled`,
@@ -177,6 +179,16 @@ board of the project, which the hub exports on every build
   `4 parts`; replacing it: `0.22 cm3`, `3 parts`). Only disconnected pieces are
   refused (`N disconnected pieces, not one body`): fuse them, or give each its
   own record.
+
+  A `mesh` printable is held to the same — closed, one body, standing on a
+  face, thicker than the nozzle's line, a positive volume — but each failure is
+  a `warning: printable '<key>' (a mesh) …` line in the log and not a refusal:
+  the STL and the 3MF are published either way, so read those lines before
+  calling the part printable. The interference gate does not measure a pair
+  with a mesh on either side and says how many it skipped; `hammerola measure`
+  measures such a pair on the mesh. `hammerola diff` shows a mesh's numbers as
+  any part's, but `--material` and the page's comparison fuse STEP solids and
+  leave a mesh out.
 * **`checks()`** — optional, for what is specific to this part: fits,
   clearances, hardware, bed size (nobody's real machine until someone says
   which printer this is for). It fails by `assert cond, "why"` or by
@@ -285,7 +297,7 @@ list.
 
 **`hammerola measure <build> <a> <b>`** prints the smallest distance between two
 parts of one view (`--view`, default `assembled`), the two closest points and
-how it was measured: two printables exactly, on their STEP; a pair with
+how it was measured: two printable solids exactly, on their STEP; a pair with
 anything else, or with a `deformed` reference, on the view's mesh, which can
 differ from the true gap by up to the tolerance it names either way — larger on
 convex faces, smaller on concave ones such as a hole — and reads a part wholly

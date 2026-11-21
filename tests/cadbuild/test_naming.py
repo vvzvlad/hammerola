@@ -300,14 +300,21 @@ def test_a_workplane_written_under_mesh_is_refused_rather_than_drawn():
     assert 'goes under "shape"' in message
 
 
-@pytest.mark.parametrize("kind", ["printable", "hardware"])
-def test_a_mesh_may_only_be_a_mock(kind):
-    """Somebody else's geometry has no solid to export, nothing to put on a bed
-    and nothing the interference gate could measure -- and `mock` is the kind
-    this build already keeps out of all three."""
+@pytest.mark.parametrize("kind", ["printable", "mock"])
+def test_a_mesh_may_be_printable_or_a_mock(kind):
+    read = read_catalogue(Model({"body": entry(),
+                                 "scan": {"mesh": Mesh(), "kind": kind}}))
+    assert read["scan"]["kind"] == kind and read["scan"]["mesh"] is not None
+    # A printable mesh goes on the bed list like any printable.
+    assert ("scan" in printable_keys(read)) == (kind == "printable")
+
+
+def test_a_mesh_may_not_be_hardware():
+    """The interference gate measures hardware and reads solids only."""
     message = refusal({"body": entry(),
-                       "scan": {"mesh": Mesh(), "kind": kind}})
-    assert f"{kind!r}" in message and "'mock'" in message
+                       "scan": {"mesh": Mesh(), "kind": "hardware"}})
+    assert "'hardware'" in message and "interference gate" in message
+    assert "'printable' or 'mock'" in message
 
 
 def test_a_real_trimesh_carries_every_attribute_the_build_reads():

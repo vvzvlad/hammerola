@@ -690,8 +690,9 @@ def _catalogue(raw: dict, files: dict) -> dict:
     here: a non-printable that declares files is a 422 four lines from the
     printable that declared none and was accepted. It is checked on the build
     side and can be read there: `cadbuild.printables.export_printables` writes
-    STEP, STL and 3MF for EVERY printable and `cadbuild.build` files them under
-    the record, so a printable with no `files` is a record no build wrote. A
+    STEP, STL and 3MF for EVERY printable solid, STL and 3MF for a printable
+    mesh, and `cadbuild.build` files them under the record, so a printable
+    with no `files` is a record no build wrote. A
     catalogue with NO printable in it is a build like any other — a bought
     enclosure around factory boards has nothing to print and is still worth
     looking at.
@@ -746,9 +747,10 @@ def _catalogue(raw: dict, files: dict) -> dict:
 
         declared = record.get("files")
         if declared is None:
-            # A build exports STEP, STL and 3MF for every printable, so a
-            # printable with no files is a record no build wrote, and the
-            # browser would draw a row promising buttons that are not there.
+            # A build exports every printable (a solid as STEP, STL and 3MF, a
+            # mesh as STL and 3MF), so a printable with no files is a record no
+            # build wrote, and the browser would draw a row promising buttons
+            # that are not there.
             if kind == KIND_PRINTABLE:
                 raise ValueError(
                     f"{where} is {kind!r} and declares no files; every "

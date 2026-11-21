@@ -124,9 +124,9 @@ def parts():
   half on the board; the copper round a drill stays), with the plating of every open
   plated hole as its wall (half a wall in a half-hole on the edge), and `<prefix>_parts_<rrggbb>`, the fitted parts as meshes merged
   by colour rounded to 16 levels a channel (the key names the rounded colour); these are
-  kind `mock`, which no gate sees. Everything is already moved by `at`, and a view
-  cannot move it again (a mesh refuses `at`): to show the board elsewhere, move the
-  other parts. DNP parts are left out.
+  kind `mock`, which no gate sees. Everything is already moved by `at`; to show the
+  board elsewhere in a view, give every one of its records the same `at` there. DNP
+  parts are left out.
   `copper=` says what `<prefix>_copper` keeps: `"all"` (the default) the pads, tracks,
   zones and vias; `"pads"` the pads alone, with the walls of their open plated holes (no
   track, zone or via); `"none"` no `<prefix>_copper` at all. Use `"pads"` or `"none"` for

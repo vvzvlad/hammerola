@@ -29,13 +29,13 @@ Three forms of reference, and no fourth:
     is no "in place" to be a different shape in, and the plate is a file
     (see _refuse_deformed_on_the_plate).
 
-A reference to a `mesh` entry (parts.py) takes neither `at` nor the
-`shape`/`deformed` hatch; `alpha` still applies. `at` is REFUSED because it is
-applied with `Shape.moved()`, which a trimesh has no answer for, so a mesh
-arrives in the frame the model put it in -- transform it with trimesh before
-handing it to the catalogue. The hatch is REFUSED because a mesh entry has no
-shape of its own to be a different shape from, and that second refusal is what
-holds the leaf names apart (see `_mesh_leaf`).
+A reference to a `mesh` entry (parts.py) takes `at` and `alpha` but not the
+`shape`/`deformed` hatch. `at` is applied to a COPY of the catalogue's
+trimesh (`_placed_mesh`), so the leaf stands where the view puts it and the
+catalogue's mesh, which `<key>.stl` is written from, is never touched. The
+hatch is REFUSED because a mesh entry has no shape of its own to be a
+different shape from, and that refusal is what holds the leaf names apart (see
+`_mesh_leaf`).
 
 A group -- `{"group": "housing", "parts": [...]}`, nested to `MAX_VIEW_DEPTH`
 and REFUSED past it -- is the author's own structure, not a classification by
@@ -61,7 +61,7 @@ import time
 from . import checklib
 from .artifacts import ASSEMBLED_VIEW_ID, FIRST_PLATE, PRINT_VIEW_ID
 from .errors import BuildError
-from .geometry import as_shapes
+from .geometry import as_shapes, location_matrix
 from .hubspec import (MAX_VIEW_DEPTH, MAX_VIEW_NAME_CHARS, MEMBER_RE,
                       RESERVED_NAMES, hub_text_problem)
 from .palette import DEFAULT_ALPHA, INVISIBLE_ALPHA, NEARLY_OPAQUE_MIN
@@ -488,13 +488,7 @@ def _read_reference(entry, vid, catalogue, colors, nodes, joints, enclosing,
     # true -- so the catalogue answers this on its own.
     mesh = record["mesh"]
     if mesh is not None and at is not None:
-        raise BuildError(
-            f'{spot}: "at" was given for a mesh. `at` is applied with '
-            "Shape.moved(), which a trimesh has no answer for, so a mesh "
-            "arrives in the frame the model put it in: transform it there -- "
-            "`mesh.apply_transform(...)`, `mesh.apply_translation(...)` -- "
-            "before handing it to the catalogue."
-        )
+        mesh = _placed_mesh(mesh, at)
 
     alpha = entry.get("alpha", DEFAULT_ALPHA)
     if isinstance(alpha, bool) or not isinstance(alpha, (int, float)):
@@ -707,6 +701,21 @@ def _placed(obj, at, where):
     # Anything without a stack is exactly one shape (as_shapes says so), and a
     # Compound is one of those: it goes in whole, as the model handed it over.
     return moved[0]
+
+
+def _placed_mesh(mesh, at):
+    """A copy of the catalogue's mesh, moved to where this reference puts it.
+
+    The twin of `_placed` for a trimesh: `at` is applied HERE and once, and the
+    catalogue's mesh is never touched, because `<key>.stl` and every other
+    reference to the key are written from it. A `cq.Vector` moves it as it
+    moves a solid, by a pure shift (`geometry.location_matrix`).
+    """
+    import numpy as np
+
+    placed = mesh.copy()
+    placed.apply_transform(np.array(location_matrix(at)))
+    return placed
 
 
 def _label_nodes(nodes):
@@ -1257,9 +1266,8 @@ def _mesh_leaf(node, occurrence):
 
     The identity `loc` is written out in full, like the one on a group above,
     because the viewer reads `loc` off every node it renders -- and it IS the
-    identity because the mesh is already where the model put it:
-    `_read_reference` refuses `at` on one. For the same reason the `at`
-    `shaped_document` stamps on this leaf is the identity too.
+    identity because the mesh is already where the view puts it: a reference's
+    `at` was applied to it by `_placed_mesh`.
     """
     import numpy as np
 

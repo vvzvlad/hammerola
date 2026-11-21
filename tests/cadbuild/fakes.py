@@ -159,7 +159,10 @@ class _Trsf:
         self._shift = shift
 
     def Value(self, row, col):
-        # OCC indexes from 1, and the gate reads it that way.
+        # OCC indexes from 1, and the gate reads it that way. Column 4 is the
+        # shift, as in the real 3 x 4 matrix.
+        if col == 4:
+            return self._shift[row - 1]
         return self._rows[row - 1][col - 1]
 
     def TranslationPart(self):
@@ -283,19 +286,25 @@ class Mesh:
                 [max(values) for values in columns]]
 
 
+def is_mesh(obj):
+    """The fake `Mesh`, or a real trimesh. `vertex_normals` and not `faces`,
+    which a CadQuery Workplane has too, as a method."""
+    return isinstance(obj, Mesh) or hasattr(obj, "vertex_normals")
+
+
 def catalogue(**kinds):
     """A read catalogue: `catalogue(lid="printable", screw="hardware")`.
 
     Every entry gets a part of its own standing at the origin. Where a test
     cares where a part stands it passes the object instead of the kind:
-    `catalogue(lid=("printable", part(x=50)))`. A `Mesh` passed that way lands
+    `catalogue(lid=("printable", part(x=50)))`. A `Mesh` (or a real trimesh) passed that way lands
     under `mesh` rather than under `shape`, which is where `read_catalogue` puts
     one -- `catalogue(scan=("mock", Mesh()))`.
     """
     read = {}
     for key, value in kinds.items():
         kind, obj = value if isinstance(value, tuple) else (value, part())
-        mesh = obj if isinstance(obj, Mesh) else None
+        mesh = obj if is_mesh(obj) else None
         read[key] = {"shape": None if mesh is not None else obj, "mesh": mesh,
                      "kind": kind, "color": None, "note": None}
     return read
@@ -305,10 +314,10 @@ def node(key, obj=None, alpha=1.0, at=None, color="#000000", deformed=None,
          label=None, plate=1):
     """One leaf, in the shape prepare_views produces.
 
-    A `Mesh` handed over as `obj` makes a MESH leaf, whose `shape` is None --
+    A `Mesh` or trimesh handed over as `obj` makes a MESH leaf, whose `shape` is None --
     exactly one of the two is set on every leaf `_read_reference` builds.
     """
-    mesh = obj if isinstance(obj, Mesh) else None
+    mesh = obj if is_mesh(obj) else None
     return {
         "key": key,
         "shape": None if mesh is not None else (obj if obj is not None

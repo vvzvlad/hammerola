@@ -441,8 +441,10 @@ def parts():
     In place of `shape` it may carry `mesh` -- a `trimesh.Trimesh` this file
     loaded itself, `trimesh.load("ref/scan.stl", force="mesh")` -- which is how
     somebody else's geometry (a scan, a part downloaded to fit against) gets
-    into the scene. A mesh entry must be `mock`, nothing is exported from it,
-    and `at` is refused on it: move it with `mesh.apply_transform(...)` here.
+    into the scene as a `mock`, or how a part made elsewhere (a Blender sculpt)
+    becomes a `printable`: exported as STL and 3MF, no STEP, its printability
+    gates printed as warnings rather than refusing the build. A mesh is never
+    `hardware`. `at` on a reference moves a copy of it, as it moves a solid.
     `kind` is one of three and has NO DEFAULT, deliberately: `printable` is
     exported and gets download buttons, `hardware` is bought and goes into the
     product, `mock` is neither -- it is what the design has to fit, and nothing
