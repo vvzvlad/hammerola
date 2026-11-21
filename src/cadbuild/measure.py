@@ -5,9 +5,10 @@
 `preview_png.load_scene` reads out of a view document. The owner chose "exact
 where it can be" (SPEC §4):
 
-  * BOTH PARTS PRINTABLE -- a `<key>.step` in the build, which the build
-    exports for every printable -- are measured on their two STEP solids by the
-    kernel's `BRepExtrema_DistShapeShape`, each placed as the view places it:
+  * BOTH PARTS PRINTABLE SOLIDS -- a `<key>.step` in the build, which the
+    build exports for every printable solid and for no mesh -- are measured on
+    their two STEP solids by the kernel's `BRepExtrema_DistShapeShape`, each
+    placed as the view places it:
     the groups above the leaf, then the leaf's `at`. Not the leaf's `loc`,
     which also carries the solid's own location, already baked into the STEP
     (`views.export_views`, `comparescene`).
@@ -162,10 +163,8 @@ def describe(found):
         unplaced = found["unplaced"]
         why = []
         if missing:
-            why.append(f"{' and '.join(missing)} "
-                       f"{'is' if len(missing) == 1 else 'are'} not printable, "
-                       f"so the revision holds no STEP of "
-                       f"{'it' if len(missing) == 1 else 'them'}")
+            why.append(f"the revision holds no STEP of {' and '.join(missing)} "
+                       f"(only a printable solid has one)")
         if reshaped:
             why.append(f"the view draws {' and '.join(reshaped)} as a shape "
                        f"of {'its' if len(reshaped) == 1 else 'their'} own, so "

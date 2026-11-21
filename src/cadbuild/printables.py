@@ -1,10 +1,12 @@
 #!/usr/bin/env python3
-"""Export every printable catalogue entry to STEP/STL/3MF, gating its geometry.
+"""Export every printable catalogue entry, gating its geometry.
 
-What a part is is decided by the catalogue (parts.py); this reads the entries
-whose kind says they go on a bed.
+A solid goes out as STEP/STL/3MF, a mesh as STL/3MF. What a part is is decided
+by the catalogue (parts.py); this reads the entries whose kind says they go on
+a bed.
 """
 
+import collections
 import math
 
 from .artifacts import (ASSEMBLED_STEM, PREVIEW_SUFFIX, PRINT_VIEW_ID,
@@ -20,10 +22,12 @@ IDENTITY = ((1.0, 0.0, 0.0, 0.0), (0.0, 1.0, 0.0, 0.0), (0.0, 0.0, 1.0, 0.0),
             (0.0, 0.0, 0.0, 1.0))
 
 
-# The three formats every printable is published in, and the order they are
+# The three formats a solid printable is published in, and the order they are
 # written in. STEP is the exact solid for whoever wants to edit it, STL is what
-# a slicer eats, 3MF carries units and is what a modern slicer prefers.
+# a slicer eats, 3MF carries units and is what a modern slicer prefers. A mesh
+# has no exact solid to hand over, so it is published in the last two.
 EXPORT_FORMATS = ("step", "stl", "3mf")
+MESH_EXPORT_FORMATS = ("stl", "3mf")
 
 
 def overview_meshes(plate):
@@ -121,131 +125,229 @@ def overhang_area(mesh):
     return float(mesh.area_faces[real & steep & ~on_bed].sum())
 
 
+def _say(name, problem, *, warn_only):
+    """One problem as a sentence: a refusal for a solid, a `warning:` for a mesh."""
+    fact, advice = problem
+    tail = f". {advice}" if advice else ""
+    if warn_only:
+        return f"warning: printable {name!r} (a mesh) {fact}{tail}"
+    return f"printable {name!r} {fact}{tail}"
+
+
+def _volume_problem(volume):
+    if volume <= 0:
+        return f"has non-positive volume ({volume})", ""
+    return None
+
+
+def _thin_problem(bbox_mm):
+    """The whole part has to be thicker than one extrusion width, or it prints
+    as a line or nothing. `minimum_feature()` is the nozzle default; a model
+    that knows its machine checks in checks()."""
+    thinnest = min(bbox_mm)
+    if thinnest < minimum_feature():
+        return (f"measures {bbox_mm} mm, so its smallest dimension is "
+                f"{thinnest:.3f} mm -- under the {minimum_feature():.3f} mm "
+                "this nozzle can lay down",
+                "The whole part is thinner than the thread it would be "
+                "printed with.")
+    return None
+
+
+Gated = collections.namedtuple(
+    "Gated", "volume watertight pieces bed_area problems")
+
+
+def _gate_mesh(mesh, *, measure_whole):
+    """The mesh people actually print has to be closed, one body, and standing
+    on something. -> `Gated`: the facts, and every problem found as a
+    `(fact, advice)` pair in the order the gates run.
+
+    `measure_whole` adds the two checks a solid has already passed on its
+    B-rep, before its STL existed (volume, and the box against one extrusion
+    width): a mesh has nothing before the STL, so they are made here, off the
+    triangles.
+    """
+    volume = float(mesh.volume)
+    problems = []
+    if measure_whole:
+        problems += filter(None, (
+            _volume_problem(volume),
+            _thin_problem([float(extent) for extent in mesh.extents])))
+
+    watertight = bool(getattr(mesh, "is_watertight", False))
+    if not watertight:
+        problems.append(("exports a mesh that is not watertight",
+                         "It would slice with holes."))
+
+    # Two shells that never touch are each valid, each closed, and add up to a
+    # positive volume, so nothing else notices; the slicer would just get loose
+    # parts. `repair=False` because the count does not depend on it, and the
+    # repair fills the holes of every open piece through networkx, which the
+    # image does not have: a mesh that is not watertight would end the build
+    # with ModuleNotFoundError (trimesh 4.12.2, `util.submesh`).
+    pieces = len(mesh.split(only_watertight=False, repair=False))
+    if pieces != 1:
+        problems.append((f"is {pieces} disconnected pieces, not one body",
+                         "Fuse them into one body, or give each piece a "
+                         "catalogue entry of its own."))
+
+    # A part whose lowest face is a point or a line has nothing for the first
+    # layer to stick to: it is printed on supports or it is not printed at all,
+    # and neither is a decision this build gets to make silently.
+    bed_area = first_layer_area(mesh)
+    if bed_area <= 0:
+        lowest = mesh.vertices[mesh.vertices[:, 2].argmin()]
+        problems.append((
+            f"touches the bed at nothing: its lowest point is "
+            f"({float(lowest[0]):.3f}, {float(lowest[1]):.3f}, "
+            f"{float(lowest[2]):.3f}) and no face lies flat there",
+            "Rest it on a face, or split it so each piece has one."))
+    return Gated(volume, watertight, pieces, bed_area, problems)
+
+
+def _gate_stl(name, stl_path, mf_path, *, warn_only):
+    """Load the STL that is on disk, gate it, write the part's 3MF.
+
+    Returns `(loaded, gated)`. A solid refuses on its first problem; a mesh
+    prints every one as a warning and goes on.
+
+    The 3MF is that same gated mesh, its vertices shared between faces as
+    trimesh merged them on load. cadquery's own 3MF writer meshes every face
+    apart, each with its own copy of the vertices on its edges, and Bambu Studio
+    does not weld a 3MF it opens: slicing the unwelded mesh it fills holes.
+    """
+    import trimesh
+
+    loaded = trimesh.load(str(stl_path))
+    gated = _gate_mesh(loaded, measure_whole=warn_only)
+    for problem in gated.problems:
+        if not warn_only:
+            raise BuildError(_say(name, problem, warn_only=False))
+        print(_say(name, problem, warn_only=True))
+    write_3mf(mf_path, {name: (loaded.vertices, loaded.faces)},
+              [(name, IDENTITY)])
+    return loaded, gated
+
+
 def export_printables(catalogue, out_dir):
-    """Export STEP/STL/3MF for every printable, gating each one on geometry.
+    """Export every printable, gating each one on geometry.
+
+    A solid is written as STEP, STL and 3MF and refused by every gate that
+    fails. A mesh (an entry carrying `mesh`) is written as STL and 3MF, has no
+    STEP, and is only warned about: a mesh is geometry that came from
+    somewhere else, and the build has no solid to hold it to.
 
     Returns `(files, metrics)` -- `{key: {ext: filename}}` for what was written,
     and the numbers the gate measured on the way past, one entry per part. The
     metrics are a by-product and cost nothing: every one of them is a value this
-    function already had in a local variable.
+    function already had in a local variable. A mesh has no faces, edges or
+    solids, so it carries none of those counts.
 
     The file map is keyed by catalogue key, then format, so no reader has to
     parse the part out of a filename (a key may contain dots).
     """
-    import cadquery as cq
-    import trimesh
-
     files = {}
     metrics = {}
 
     for name in printable_keys(catalogue):
-        obj = catalogue[name]["shape"]
-        shape = as_shape(obj, f"printable {name!r}")
-
-        # Gate part 1 -- topology and volume, before anything is written.
-        if not shape.isValid():
-            raise BuildError(f"printable {name!r} is not a valid solid (isValid() == False)")
-        volume = shape.Volume()
-        if volume <= 0:
-            raise BuildError(f"printable {name!r} has non-positive volume ({volume})")
-
-        # Measured before the export: exportStl meshes the shape in place, and
-        # after that BoundingBox() is the mesh's box, which reads bigger (see
-        # geometry.drop_mesh). All counts come off the same unmeshed shape.
-        box = shape.BoundingBox()
-        measured = {
-            "volume_mm3": volume,
-            "bbox_mm": [box.xlen, box.ylen, box.zlen],
-            "faces": len(shape.Faces()),
-            "edges": len(shape.Edges()),
-            "solids": len(shape.Solids()),
-        }
-
-        # Gate part 1b -- the whole part has to be thicker than one extrusion
-        # width, or it prints as a line or nothing. `minimum_feature()` is the
-        # nozzle default; a model that knows its machine checks in checks().
-        thinnest = min(measured["bbox_mm"])
-        if thinnest < minimum_feature():
-            raise BuildError(
-                f"printable {name!r} measures {measured['bbox_mm']} mm, so its "
-                f"smallest dimension is {thinnest:.3f} mm -- under the "
-                f"{minimum_feature():.3f} mm this nozzle can lay down. The "
-                "whole part is thinner than the thread it would be printed "
-                "with; refusing to publish."
-            )
-
-        assembly = cq.Assembly(obj, name=name)
-        step_path = out_dir / f"{name}.step"
-        stl_path = out_dir / f"{name}.stl"
-        mf_path = out_dir / f"{name}.3mf"
-
-        assembly.export(str(step_path), exportType="STEP")
-        # exportStl directly, NOT assembly.export/exporters.export: both of
-        # those leave OCC's `relative` flag at its default True, which scales
-        # the linear deflection by each face's own size. A part whose faces
-        # differ wildly in area -- a 1000 mm2 plate meeting a 12 mm2 chamfer
-        # patch -- then gets those faces meshed to different deflections,
-        # their shared edge polygons disagree, and the STL comes out with a
-        # crack along it. relative=False meshes everything to the same
-        # STL_TOLERANCE and makes that number mean what it says.
-        shape.exportStl(
-            str(stl_path), tolerance=STL_TOLERANCE,
-            angularTolerance=STL_ANGULAR_TOLERANCE, ascii=False, relative=False,
-        )
-        # Gate part 2 -- the mesh people actually print must be closed.
-        mesh = trimesh.load(str(stl_path))
-        watertight = getattr(mesh, "is_watertight", False)
-        if not watertight:
-            raise BuildError(
-                f"printable {name!r} exports a mesh that is not watertight. "
-                "It would slice with holes; refusing to publish."
-            )
-
-        # Gate part 3 -- and that mesh must be one body. Two shells that never
-        # touch are each valid, each closed, and add up to a positive volume,
-        # so nothing above notices; the slicer would just get loose parts.
-        pieces = len(mesh.split(only_watertight=False))
-        if pieces != 1:
-            raise BuildError(
-                f"printable {name!r} is {pieces} disconnected pieces, not one "
-                "body. Fuse them into one solid, or give each piece a "
-                "catalogue entry of its own."
-            )
-
-        # Gate part 4 -- and it has to stand on something. A part whose lowest
-        # face is a point or a line has nothing for the first layer to stick
-        # to: it is printed on supports or it is not printed at all, and
-        # neither is a decision this build gets to make silently.
-        bed_area = first_layer_area(mesh)
-        if bed_area <= 0:
-            lowest = mesh.vertices[mesh.vertices[:, 2].argmin()]
-            raise BuildError(
-                f"printable {name!r} touches the bed at nothing: its lowest "
-                f"point is ({float(lowest[0]):.3f}, {float(lowest[1]):.3f}, "
-                f"{float(lowest[2]):.3f}) and no face lies flat there. Rest "
-                "it on a face, or split it so each piece has one."
-            )
-
-        # The 3MF is that same gated mesh, its vertices shared between faces as
-        # trimesh merged them on load. cadquery's own 3MF writer meshes every
-        # face apart, each with its own copy of the vertices on its edges, and
-        # Bambu Studio does not weld a 3MF it opens: slicing the unwelded mesh
-        # it fills holes.
-        write_3mf(mf_path, {name: (mesh.vertices, mesh.faces)}, [(name, IDENTITY)])
-
-        print(f"  {name}: valid, volume {volume / 1000.0:.2f} cm3, watertight, "
-              f"one body, {mesh.faces.shape[0]} triangles")
-
-        measured["watertight"] = bool(watertight)
-        measured["triangles"] = int(mesh.faces.shape[0])
-        # Both come off the mesh loaded above. The first layer is always
-        # positive here; it is kept to be compared between revisions.
-        measured["first_layer_mm2"] = bed_area
-        measured["overhang_mm2"] = overhang_area(mesh)
-        metrics[name] = measured
-        files[name] = {ext: f"{name}.{ext}" for ext in EXPORT_FORMATS}
-
-        # Hand the shape back the way the model built it, exact and unmeshed.
-        drop_mesh(obj)
+        mesh = catalogue[name]["mesh"]
+        if mesh is None:
+            metrics[name] = _export_solid(name, catalogue[name]["shape"],
+                                          out_dir)
+            files[name] = {ext: f"{name}.{ext}" for ext in EXPORT_FORMATS}
+        else:
+            metrics[name] = _export_mesh(name, mesh, out_dir)
+            files[name] = {ext: f"{name}.{ext}" for ext in MESH_EXPORT_FORMATS}
 
     return files, metrics
+
+
+def _export_solid(name, obj, out_dir):
+    """STEP, STL and 3MF of one solid, refusing it on any failed gate."""
+    import cadquery as cq
+
+    shape = as_shape(obj, f"printable {name!r}")
+
+    # Gate part 1 -- topology and volume, before anything is written.
+    if not shape.isValid():
+        raise BuildError(f"printable {name!r} is not a valid solid (isValid() == False)")
+    volume = shape.Volume()
+    problem = _volume_problem(volume)
+    if problem:
+        raise BuildError(_say(name, problem, warn_only=False))
+
+    # Measured before the export: exportStl meshes the shape in place, and
+    # after that BoundingBox() is the mesh's box, which reads bigger (see
+    # geometry.drop_mesh). All counts come off the same unmeshed shape.
+    box = shape.BoundingBox()
+    measured = {
+        "volume_mm3": volume,
+        "bbox_mm": [box.xlen, box.ylen, box.zlen],
+        "faces": len(shape.Faces()),
+        "edges": len(shape.Edges()),
+        "solids": len(shape.Solids()),
+    }
+
+    # Gate part 1b -- on the exact box, which the mesh's would inflate.
+    problem = _thin_problem(measured["bbox_mm"])
+    if problem:
+        raise BuildError(_say(name, problem, warn_only=False))
+
+    assembly = cq.Assembly(obj, name=name)
+    step_path = out_dir / f"{name}.step"
+    stl_path = out_dir / f"{name}.stl"
+
+    assembly.export(str(step_path), exportType="STEP")
+    # exportStl directly, NOT assembly.export/exporters.export: both of
+    # those leave OCC's `relative` flag at its default True, which scales
+    # the linear deflection by each face's own size. A part whose faces
+    # differ wildly in area -- a 1000 mm2 plate meeting a 12 mm2 chamfer
+    # patch -- then gets those faces meshed to different deflections,
+    # their shared edge polygons disagree, and the STL comes out with a
+    # crack along it. relative=False meshes everything to the same
+    # STL_TOLERANCE and makes that number mean what it says.
+    shape.exportStl(
+        str(stl_path), tolerance=STL_TOLERANCE,
+        angularTolerance=STL_ANGULAR_TOLERANCE, ascii=False, relative=False,
+    )
+    loaded, gated = _gate_stl(name, stl_path, out_dir / f"{name}.3mf",
+                              warn_only=False)
+
+    print(f"  {name}: valid, volume {volume / 1000.0:.2f} cm3, watertight, "
+          f"one body, {loaded.faces.shape[0]} triangles")
+
+    measured["watertight"] = gated.watertight
+    measured["triangles"] = int(loaded.faces.shape[0])
+    # Both come off the mesh loaded above. The first layer is always
+    # positive here; it is kept to be compared between revisions.
+    measured["first_layer_mm2"] = gated.bed_area
+    measured["overhang_mm2"] = overhang_area(loaded)
+
+    # Hand the shape back the way the model built it, exact and unmeshed.
+    drop_mesh(obj)
+    return measured
+
+
+def _export_mesh(name, mesh, out_dir):
+    """STL and 3MF of a mesh the model loaded, warning on any failed gate.
+
+    The STL is written from the model's mesh and read back, so every number is
+    taken off the file a slicer will open, as for a solid.
+    """
+    stl_path = out_dir / f"{name}.stl"
+    mesh.export(str(stl_path), file_type="stl")
+    loaded, gated = _gate_stl(name, stl_path, out_dir / f"{name}.3mf",
+                              warn_only=True)
+    print(f"  {name}: mesh, volume {gated.volume / 1000.0:.2f} cm3, "
+          f"{'watertight' if gated.watertight else 'NOT watertight'}, "
+          f"{gated.pieces} {'body' if gated.pieces == 1 else 'bodies'}, "
+          f"{loaded.faces.shape[0]} triangles")
+    return {
+        "volume_mm3": gated.volume,
+        "bbox_mm": [float(extent) for extent in loaded.extents],
+        "watertight": gated.watertight,
+        "triangles": int(loaded.faces.shape[0]),
+        "first_layer_mm2": gated.bed_area,
+        "overhang_mm2": overhang_area(loaded),
+    }

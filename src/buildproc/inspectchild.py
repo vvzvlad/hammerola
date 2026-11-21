@@ -13,7 +13,7 @@ kernel are hundreds of megabytes the hub must not hold, so they run behind the
 wrapper, under the same ceilings, in a process that ends with the answer.
 
 Both read only what the build already wrote -- the view document
-`<view>.json` and, to measure two printables, their `<key>.step` -- and build
+`<view>.json` and, to measure two printable solids, their `<key>.step` -- and build
 nothing. Stdout is the answer and becomes the job's log; a snapshot also
 writes its PNG to `--out`, a path the parent chose in the job's directory.
 

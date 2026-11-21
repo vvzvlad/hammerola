@@ -252,6 +252,69 @@ def as_shapes(obj, where):
     return shapes
 
 
+def location_matrix(at):
+    """`[R | t]` acting on a column vector: a `cq.Location` as four rows of four.
+
+    The identity for None. Read off the `gp_Trsf` the way `gate._turns_about_z_only`
+    reads its rotation: the first three columns are the rotation, the fourth is
+    the shift, and the last row is (0, 0, 0, 1). A `cq.Vector`, whose `wrapped`
+    is a gp_Vec, is the pure shift `Shape.moved` makes of one (as
+    `views._motion_loc` reads it).
+    """
+    if at is None:
+        rows = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
+                [0.0, 0.0, 1.0, 0.0]]
+    elif not hasattr(at.wrapped, "Transformation"):
+        shift = at.wrapped
+        rows = [[1.0, 0.0, 0.0, float(shift.X())],
+                [0.0, 1.0, 0.0, float(shift.Y())],
+                [0.0, 0.0, 1.0, float(shift.Z())]]
+    else:
+        trsf = at.wrapped.Transformation()
+        rows = [[float(trsf.Value(row, col)) for col in (1, 2, 3, 4)]
+                for row in (1, 2, 3)]
+    return rows + [[0.0, 0.0, 0.0, 1.0]]
+
+
+class Extent:
+    """The box round a mesh, with the attribute names of `cq.BoundBox`.
+
+    Callers read `xmin`..`zmax` (the print gate) and `xlen`, `ylen`, `zlen`
+    (the metrics) off a solid's box and a mesh's box alike.
+    """
+
+    def __init__(self, low, high):
+        self.xmin, self.ymin, self.zmin = (float(value) for value in low)
+        self.xmax, self.ymax, self.zmax = (float(value) for value in high)
+
+    @property
+    def xlen(self):
+        return self.xmax - self.xmin
+
+    @property
+    def ylen(self):
+        return self.ymax - self.ymin
+
+    @property
+    def zlen(self):
+        return self.zmax - self.zmin
+
+
+def mesh_extent(mesh):
+    """The `Extent` of a trimesh, from its `bounds`."""
+    low, high = mesh.bounds
+    return Extent(low, high)
+
+
+def enclosing(boxes):
+    """The box round some boxes: the one box itself when there is one, else an `Extent`."""
+    if len(boxes) == 1:
+        return boxes[0]
+    return Extent(
+        [min(getattr(box, f"{axis}min") for box in boxes) for axis in "xyz"],
+        [max(getattr(box, f"{axis}max") for box in boxes) for axis in "xyz"])
+
+
 def drop_mesh(obj):
     """Throw away the triangulation an export left on a shape.
 

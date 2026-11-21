@@ -52,8 +52,8 @@ def test_a_measurement_prints_its_answer_and_a_refusal_is_a_failure(build):
                           view="assembled", parts=("plate", "reference_spacer"),
                           limits=BUILD_LIMITS)
     assert outcome.status == STATUS_OK, outcome.log
-    assert "method: the view's mesh -- plate and reference_spacer are not " \
-           "printable" in outcome.log
+    assert "method: the view's mesh -- the revision holds no STEP of plate " \
+           "and reference_spacer (only a printable solid has one)" in outcome.log
     assert "distance: " in outcome.log
 
     refused = run_inspect(build, pid="p", kind=INSPECT_MEASURE, view="print",

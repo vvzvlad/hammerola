@@ -25,6 +25,11 @@ An entry carries `shape` -- a CadQuery object this build computes with -- or
 and `ref/` travels to the hub with the source, so a scan lives beside
 model.py). Never both: one key is one piece of geometry, and two of them under
 one name would be two parts sharing an identity.
+
+A mesh is `printable` or `mock`, and not `hardware`. A printable mesh is
+exported as STL and 3MF (no STEP: there is no solid to write), and every
+printability gate that refuses a solid only warns about it. A mock mesh is
+scenery.
 """
 
 import re
@@ -330,16 +335,17 @@ def read_catalogue(model):
                 f"{KIND_HARDWARE!r} is bought and goes into the product, "
                 f"{KIND_MOCK!r} is only there so the picture makes sense."
             )
-        if mesh is not None and kind != KIND_MOCK:
-            # A mesh has no solid to export, judge for printability, or
-            # intersect, and `mock` is already exempt from all three.
+        if mesh is not None and kind == KIND_HARDWARE:
+            # The interference gate measures hardware, and it reads solids
+            # only. A printable mesh is exported (STL and 3MF, no STEP) and a
+            # mock one is scenery.
             raise BuildError(
                 f'{where} is a "mesh" declared {kind!r}, and a mesh has to be '
-                f"{KIND_MOCK!r}. It is geometry that came from somewhere else: "
-                "there is no solid in it to export, nothing to put on a bed, "
-                "and nothing the interference gate could measure -- which is "
-                f"exactly what {KIND_MOCK!r} already means here. A scan is the "
-                "thing the part is designed around, so scenery is what it is."
+                f"{KIND_PRINTABLE!r} or {KIND_MOCK!r}. {KIND_HARDWARE!r} is "
+                "held to the interference gate, which measures solids and "
+                "cannot measure triangles: a part somebody else modelled that "
+                f"is printed is {KIND_PRINTABLE!r}, and one that is only there "
+                f"to be seen is {KIND_MOCK!r}."
             )
 
         color = record.get("color")

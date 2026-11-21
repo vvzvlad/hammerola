@@ -23,9 +23,10 @@ checking: no model runs in this process, only hub code reading two revisions
 the hub published.
 
 The part set is the `*.step` files of the two build directories, unioned by
-stem (the build writes one per printable, `src/cadbuild/printables.py`). A stem
-in both is compared; a stem on one side is named with the volume from its own
-revision's metrics.json, no kernel needed.
+stem (the build writes one per printable solid and none for a printable mesh,
+`src/cadbuild/printables.py`, so a mesh is not compared). A stem in both is
+compared; a stem on one side is named with the volume from its own revision's
+metrics.json, no kernel needed.
 
 A failure is the run not happening: bad invocation, uncappable thread pool, a
 crash. A part the kernel cannot measure gets its reason on its own line and the
@@ -157,8 +158,8 @@ def _write_artefacts(scene, out_dir, view, view_files, diffs, refused, covered):
     must say something about every part the view shows.
 
     Both halves describe the parts the compared view shows. The walked stems
-    are every printable both builds exported (what the printed report covers);
-    using those would list parts in no picture.
+    are every printable solid both builds exported (what the printed report
+    covers); using those would list parts in no picture.
 
     Not atomic: `out_dir` is a staging directory the parent publishes by rename
     after a clean exit (`store.publish_compare`).

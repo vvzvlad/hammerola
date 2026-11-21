@@ -20,8 +20,9 @@ duplicate is drawn but cannot be hidden, recoloured or cut, and highlighting
 its path lights both).
 
 The difference is measured in the frame of the part's STEP file: a build
-exports one per printable from `catalogue[key]["shape"]`, unmoved by any view,
-with whatever location that solid carries of its own baked into the geometry.
+exports one per printable solid from `catalogue[key]["shape"]` (a printable
+mesh has none and is not compared), unmoved by any view, with whatever
+location that solid carries of its own baked into the geometry.
 A view moves the solid by its `at`, which the build records on the leaf
 (`views.shaped_document`); the leaf's `loc` is that motion composed with the
 solid's own location, so a piece drawn with it would have the own location
@@ -186,9 +187,9 @@ def report(diffs, document_a, document_b, *, view_id, refused, covered):
     `covered` is the set of keys the walk actually compared
     (`buildproc.comparechild._compare`), also required: `unchanged` is said
     only about keys in it. The walk is over `*.step` files, one per printable
-    (`cadbuild.printables`), while a view shows every kind of entry, so its
-    `hardware` and `mock` keys are never covered; nor is a part only one build
-    exported.
+    solid (`cadbuild.printables`), while a view shows every kind of entry, so
+    its `hardware` and `mock` keys and its printable meshes are never covered;
+    nor is a part only one build exported.
 
     The parts are those the two views show, by the same rule as the scene
     (`_shown`), so the list and the picture agree: a part this view does not
@@ -267,7 +268,7 @@ def _uncovered_line(key):
     never `unchanged`: an M3x8 swapped for an M3x12 is invisible here.
 
     The view and the walk are different sets: the walk is over the STEP files,
-    one per printable; a view shows every kind of entry (`parts.KINDS`).
+    one per printable solid; a view shows every kind of entry (`parts.KINDS`).
 
     The reason defines the category before the example: a part that changed
     kind between revisions is uncovered too, though one build did export a
@@ -418,7 +419,7 @@ def _planned(places, diffs, common, side, group_name, color, view_id):
     it still compares while nothing in the view changed.
 
     A key in `diffs` this view does not show is skipped: a view shows a subset
-    of the catalogue, while STEP files exist for every printable.
+    of the catalogue, while STEP files exist for every printable solid.
     """
     planned = []
     for place in places:

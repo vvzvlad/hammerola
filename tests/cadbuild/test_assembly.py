@@ -310,31 +310,103 @@ def test_the_scenery_is_in_the_file_and_out_of_the_measurement(exported, out_dir
     assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
 
 
-def test_a_mesh_leaf_is_drawn_and_never_glued(exported, out_dir):
-    """The one thing `assembled.stl` leaves out, and why it is not a decision.
+def box_mesh(x=0.0, size=2.0):
+    """A real trimesh box, `size` across, centred at (x, 0, 0): twelve triangles."""
+    trimesh = pytest.importorskip(
+        "trimesh", exc_type=ImportError,
+        reason="the file written is the real mesh library's")
+    return trimesh.creation.box(
+        extents=(size,) * 3,
+        transform=trimesh.transformations.translation_matrix((x, 0.0, 0.0)))
 
-    A `mesh` entry holds a trimesh: there is nothing for `Compound.makeCompound`
-    to glue and nothing for `exportStl` to mesh, so it cannot be in this file at
-    any price -- while the view document the browser loads has it. It is out of
-    the measurement too, but for the ordinary reason every mock is: scenery
-    overlaps the product by construction.
 
-    Passing is also the proof that `as_shapes` never saw it: a mesh leaf carries
-    no `shape` at all, so reaching it would refuse the build.
-    """
+def triangles_in(path):
+    import trimesh
+    return len(trimesh.load(str(path), force="mesh").faces)
+
+
+class Meshing(Recording):
+    """A solid whose `exportStl` writes what the kernel would: a real STL (a box,
+    twelve triangles), which the meshes are then added to."""
+
+    def exportStl(self, path, **kwargs):
+        super().exportStl(path, **kwargs)
+        box_mesh().export(str(path), file_type="stl")
+
+
+def test_a_mesh_leaf_is_written_into_the_file_after_the_solids(exported, out_dir):
+    """The solids are exported as before, then the placed mesh is appended to the
+    same file; it counts as a part, and as the product when it is not a mock."""
     calls, _ = exported
-    product = Recording(calls, box=Box(0, 0, 0, 30, 40, 50))
+    product = Meshing(calls, box=Box(0, 0, 0, 30, 40, 50))
     prepared = [view(ASSEMBLED_VIEW_ID, [node("body", Workplane(product)),
-                                         node("scan", Mesh())])]
+                                         node("scan", box_mesh(x=100.0))])]
 
-    parts, bbox = export_assembled(prepared, out_dir,
-                                   catalogue(body="printable",
-                                             scan=("mock", Mesh())))
+    parts, bbox = export_assembled(
+        prepared, out_dir,
+        catalogue(body="printable", scan=("printable", box_mesh())))
 
+    assert calls == ["bbox", "stl"]
+    assert triangles_in(out_dir / f"{ASSEMBLED_STEM}.stl") == 24
+    assert parts == 2
+    # X from the solid's 0 to the mesh's 101; Y and Z from the mesh's -1.
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (101, 41, 51)
+
+
+def test_a_mesh_mock_is_in_the_file_and_out_of_the_measurement(exported, out_dir):
+    """The scenery rule holds for a mesh as it does for a solid."""
+    calls, _ = exported
+    product = Meshing(calls, box=Box(0, 0, 0, 30, 40, 50))
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("body", Workplane(product)),
+                                         node("scan", box_mesh(x=100.0))])]
+
+    parts, bbox = export_assembled(
+        prepared, out_dir,
+        catalogue(body="printable", scan=("mock", box_mesh())))
+
+    assert triangles_in(out_dir / f"{ASSEMBLED_STEM}.stl") == 24
+    assert parts == 2
     assert (bbox.xlen, bbox.ylen, bbox.zlen) == (30, 40, 50)
-    # ONE body in the file, not two: the mesh is not in it.
-    assert parts == 1
-    assert [path.name for path in out_dir.iterdir()] == [f"{ASSEMBLED_STEM}.stl"]
+
+
+def refusing_compound(monkeypatch):
+    """A kernel whose `makeCompound` fails the test: nothing may glue nothing."""
+    class Compound:
+        @staticmethod
+        def makeCompound(shapes):
+            raise AssertionError(f"makeCompound({shapes!r})")
+
+    plant_cadquery(monkeypatch, Compound)
+
+
+def test_a_view_of_meshes_alone_is_written_without_a_compound(monkeypatch,
+                                                              out_dir):
+    refusing_compound(monkeypatch)
+    prepared = [view(ASSEMBLED_VIEW_ID, [node("scan", box_mesh())]),
+                view(PRINT_VIEW_ID, [node("scan", box_mesh(x=50.0))])]
+    read = catalogue(scan=("printable", box_mesh()))
+
+    parts, bbox = export_assembled(prepared, out_dir, read)
+    bodies, plate_bbox = export_print_plate(prepared, out_dir)
+
+    assert (parts, bodies) == (1, 1)
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (2, 2, 2)
+    assert (plate_bbox.xmin, plate_bbox.xmax) == (49, 51)
+    assert triangles_in(out_dir / f"{ASSEMBLED_STEM}.stl") == 12
+    assert triangles_in(out_dir / f"{PRINT_VIEW_ID}.stl") == 12
+
+
+def test_the_plate_holds_its_meshes_and_measures_them(exported, out_dir):
+    calls, _ = exported
+    solid = Meshing(calls, box=Box(0, 0, 0, 30, 40, 50))
+    prepared = [view(PRINT_VIEW_ID, [node("body", Workplane(solid)),
+                                     node("scan", box_mesh(x=100.0))])]
+
+    bodies, bbox = export_print_plate(prepared, out_dir)
+
+    assert bodies == 2
+    assert (bbox.xlen, bbox.ylen, bbox.zlen) == (101, 41, 51)
+    assert triangles_in(out_dir / f"{PRINT_VIEW_ID}.stl") == 24
 
 
 def test_a_view_of_nothing_but_scenery_has_no_product_to_measure(exported,

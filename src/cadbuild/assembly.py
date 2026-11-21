@@ -11,7 +11,8 @@ from .artifacts import (ASSEMBLED_STEM, ASSEMBLED_VIEW_ID, CARD_SUFFIX,
                         PREVIEW_SUFFIX, PRINT_VIEW_ID, STL_ANGULAR_TOLERANCE,
                         STL_TOLERANCE, plate_file)
 from .errors import BuildError
-from .geometry import as_shapes, drop_mesh
+from .geometry import (as_shapes, drop_mesh, enclosing, location_matrix,
+                       mesh_extent)
 from .parts import KIND_MOCK
 from .threemf import write_3mf
 
@@ -44,14 +45,19 @@ def _view_objects(prepared, vid):
     view was prepared).
 
     Mesh leaves are skipped: a `mesh` entry holds a trimesh (`parts.py`) and its
-    leaf's `shape` is None, so there is nothing to glue or export. A mesh is in
-    every view the browser loads and in none of the STLs written here. Only a
-    `mock` may be a mesh and the plate refuses mocks, so this affects only the
-    assembly.
+    leaf's `shape` is None, so there is nothing to glue or mesh with the
+    kernel. `_view_meshes` returns those, and `_write_stl` puts them into the
+    same file.
     """
     nodes = _view_nodes(prepared, vid)
     return None if nodes is None else [node["shape"] for node in nodes
                                        if node["mesh"] is None]
+
+
+def _view_meshes(prepared, vid):
+    """The trimeshes a prepared view draws, in order, each already placed."""
+    return [node["mesh"] for node in _view_nodes(prepared, vid)
+            if node["mesh"] is not None]
 
 
 def _product_bbox(prepared, catalogue):
@@ -61,22 +67,51 @@ def _product_bbox(prepared, catalogue):
     construction (see `parts.KIND_MOCK`), so including it would report changes
     to the scenery as size changes and mask a part moved inside the assembly.
 
+    A mesh leaf that is not a mock is the product too, and counts by its
+    placed bounds.
+
     `None` when the view holds only mocks: a catalogue with no printable, or
     one whose printables the view declares absent. `collect_metrics` then
     writes no `bbox_mm`.
     """
-    shapes = [shape
-              for node in _view_nodes(prepared, ASSEMBLED_VIEW_ID)
-              if catalogue[node["key"]]["kind"] != KIND_MOCK
+    product = [node for node in _view_nodes(prepared, ASSEMBLED_VIEW_ID)
+               if catalogue[node["key"]]["kind"] != KIND_MOCK]
+    shapes = [shape for node in product if node["mesh"] is None
               for shape in as_shapes(node["shape"], ASSEMBLED_VIEW_ID)]
-    if not shapes:
-        return None
+    boxes = [mesh_extent(node["mesh"]) for node in product
+             if node["mesh"] is not None]
     if len(shapes) == 1:
-        return shapes[0].BoundingBox()
-    # Glued only to be measured (never exported or meshed). Imported at the
-    # point of use so the single-body path needs no kernel.
-    from cadquery.occ_impl.shapes import Compound
-    return Compound.makeCompound(shapes).BoundingBox()
+        boxes.append(shapes[0].BoundingBox())
+    elif shapes:
+        # Glued only to be measured (never exported or meshed). Imported at the
+        # point of use so the single-body path needs no kernel.
+        from cadquery.occ_impl.shapes import Compound
+        boxes.append(Compound.makeCompound(shapes).BoundingBox())
+    return enclosing(boxes) if boxes else None
+
+
+def _write_stl(shape, meshes, path):
+    """Write `path`: the glued solids, then the placed meshes after them.
+
+    `shape` is None when there is no solid, and the file is the meshes alone.
+    The kernel meshes the solids with `relative=False` for the same reason as
+    the printables: OCC's default scales the deflection per face and cracks the
+    mesh where faces of very different size meet.
+    """
+    if shape is not None:
+        shape.exportStl(str(path), tolerance=STL_TOLERANCE,
+                        angularTolerance=STL_ANGULAR_TOLERANCE,
+                        ascii=False, relative=False)
+    if not meshes:
+        return
+    # Imported at the point of use: a build of solids alone needs no mesh
+    # library here.
+    import trimesh
+
+    written = ([] if shape is None
+               else [trimesh.load(str(path), force="mesh", process=False)])
+    trimesh.util.concatenate(written + list(meshes)).export(
+        str(path), file_type="stl")
 
 
 # Twin of print_plate_shape below: same walk, same glue. The code differs in:
@@ -86,8 +121,9 @@ def _product_bbox(prepared, catalogue):
 #   2. no matching view: this one raises, that one returns None, because an
 #      `assembled` view is mandatory and a `print` view is optional.
 #
-# Both import `Compound` at the point of use, so the no-view and single-body
-# paths work without CadQuery (tests/cadbuild/test_assembly.py relies on it).
+# Both import `Compound` at the point of use, so the no-view, meshes-only and
+# single-body paths work without CadQuery (tests/cadbuild/test_assembly.py
+# relies on it).
 def assembled_shape(prepared):
     """The whole product as one shape: the assembled view, glued.
 
@@ -97,6 +133,10 @@ def assembled_shape(prepared):
     Glued, not fused: a compound is one file and instant, where a boolean union
     of an assembly takes minutes and can fail. It is for looking at, not
     slicing.
+
+    `None` for the shape when the view holds no solid, only meshes
+    (`_write_stl` writes those): there is nothing to glue, and a compound of
+    nothing is not a shape the kernel will mesh.
     """
     objects = _view_objects(prepared, ASSEMBLED_VIEW_ID)
     if objects is None:
@@ -109,11 +149,14 @@ def assembled_shape(prepared):
     # missing parts that the viewer shows.
     shapes = [shape for obj in objects
               for shape in as_shapes(obj, ASSEMBLED_VIEW_ID)]
+    if not shapes:
+        return None, objects
     if len(shapes) == 1:
         return shapes[0], objects
     # Imported at the point of use rather than at the top of the function: the
-    # two paths above need no kernel at all, and this way the no-view and
-    # single-body cases stay answerable on a python that has no CadQuery in it.
+    # paths above need no kernel at all, and this way the no-view, meshes-only
+    # and single-body cases stay answerable on a python that has no CadQuery in
+    # it.
     from cadquery.occ_impl.shapes import Compound
     return Compound.makeCompound(shapes), objects
 
@@ -125,9 +168,9 @@ def assembled_shape(prepared):
 #   2. the view id passed to `as_shapes` and the file stem: ASSEMBLED_VIEW_ID
 #      and ASSEMBLED_STEM here, PRINT_VIEW_ID for both there;
 #   3. this one always writes; that one returns None without a matching view;
-#   4. what is measured, and so the signature: the plate measures the shape it
-#      exports, this one `_product_bbox` (the non-mock leaves), which needs the
-#      catalogue.
+#   4. what is measured, and so the signature: the plate measures what it
+#      exports (the solids' box and the meshes' bounds), this one
+#      `_product_bbox` (the non-mock leaves), which needs the catalogue.
 def export_assembled(prepared, out_dir, catalogue):
     """Write `assembled.stl` -- the whole thing in one mesh.
 
@@ -135,12 +178,13 @@ def export_assembled(prepared, out_dir, catalogue):
     preview cannot get it from the file, because touching parts weld into one
     (non-watertight) body when the mesh is loaded. `bbox` is the product's own
     envelope (the non-mock leaves), published as `assembly.bbox_mm`; the OCC
-    `BoundingBox`, or None when the view holds only scenery.
+    `BoundingBox` (or, with a mesh among the leaves, a box of the same
+    attributes), or None when the view holds only scenery.
 
     The file is the whole scene, the number is not: the wall a bracket bolts to
     belongs in the picture, but a box including mocks would measure the
-    scenery. Mesh leaves are in neither (`_view_objects`); the browser's view
-    still shows them.
+    scenery. Mesh leaves are in the file and count in the number by their
+    kind, like any other leaf.
 
     Measured before the export: exportStl meshes the shape in place, and a box
     taken afterwards is the mesh's, tenths of a millimetre bigger on anything
@@ -148,16 +192,12 @@ def export_assembled(prepared, out_dir, catalogue):
     order.
     """
     shape, objects = assembled_shape(prepared)
+    meshes = _view_meshes(prepared, ASSEMBLED_VIEW_ID)
     path = out_dir / f"{ASSEMBLED_STEM}.stl"
     # Measured before the export (see the docstring), off the product rather
     # than `shape`, which includes the mocks.
     bbox = _product_bbox(prepared, catalogue)
-    # relative=False for the same reason as the printables above: OCC's
-    # default scales the deflection per face and cracks the mesh where faces
-    # of very different size meet.
-    shape.exportStl(str(path), tolerance=STL_TOLERANCE,
-                    angularTolerance=STL_ANGULAR_TOLERANCE,
-                    ascii=False, relative=False)
+    _write_stl(shape, meshes, path)
     if not path.is_file():
         raise BuildError(f"{path.name} was not written")
 
@@ -169,14 +209,15 @@ def export_assembled(prepared, out_dir, catalogue):
     for obj in objects:
         drop_mesh(obj)
     # Bodies, not view objects: one object built with .add() is several parts.
-    parts = sum(len(as_shapes(obj, ASSEMBLED_VIEW_ID)) for obj in objects)
+    parts = (sum(len(as_shapes(obj, ASSEMBLED_VIEW_ID)) for obj in objects)
+             + len(meshes))
     print(f"  {path.name}: {parts} parts, {path.stat().st_size / 1e6:.2f} MB")
     return parts, bbox
 
 
 # Twin of assembled_shape above; the differences are listed there.
 def print_plate_shape(prepared):
-    """The bed as one shape: the `print` view, glued. `None` when there is none.
+    """The bed as one shape: the `print` view, glued. `None` when there is no view.
 
     The `print` view shows what is laid out on the bed, in print orientation.
     It is tessellated for the viewer (`print.json`); this shape is behind
@@ -187,7 +228,8 @@ def print_plate_shape(prepared):
     `None`, not an error, without such a view: it is optional, and a
     single-part model already in print orientation has none.
 
-    Glued, not fused, for the reason `assembled_shape` gives.
+    Glued, not fused, for the reason `assembled_shape` gives. A plate of
+    meshes alone has no shape to glue: `(None, objects)`.
     """
     objects = _view_objects(prepared, PRINT_VIEW_ID)
     if objects is None:
@@ -197,6 +239,8 @@ def print_plate_shape(prepared):
     # .add() would otherwise contribute only its first solid.
     shapes = [shape for obj in objects
               for shape in as_shapes(obj, PRINT_VIEW_ID)]
+    if not shapes:
+        return None, objects
     if len(shapes) == 1:
         return shapes[0], objects
     # Imported at the point of use: the paths above need no kernel.
@@ -212,8 +256,9 @@ def export_print_plate(prepared, out_dir):
     the preview needs it because touching parts weld into one body on load.
 
     `bbox` is published as `assembly.print_bbox_mm` (how much of the bed this
-    build occupies), returned as the OCC `BoundingBox`;
-    `cadbuild.metrics.collect_metrics` turns it into numbers.
+    build occupies), returned as the OCC `BoundingBox` or, with a mesh on the
+    plate, a box of the same attributes; `cadbuild.metrics.collect_metrics`
+    turns it into numbers.
 
     Measured before the export: exportStl meshes the shape in place, and a box
     taken afterwards is the mesh's, tenths of a millimetre off on anything
@@ -229,16 +274,14 @@ def export_print_plate(prepared, out_dir):
     if plate is None:
         return None
     shape, objects = plate
+    meshes = _view_meshes(prepared, PRINT_VIEW_ID)
 
     path = out_dir / f"{PRINT_VIEW_ID}.stl"
-    # Measured before the export (see the docstring).
-    bbox = shape.BoundingBox()
-    # relative=False for the same reason as the printables: OCC's default
-    # scales the deflection per face and cracks the mesh where faces of very
-    # different size meet.
-    shape.exportStl(str(path), tolerance=STL_TOLERANCE,
-                    angularTolerance=STL_ANGULAR_TOLERANCE,
-                    ascii=False, relative=False)
+    # Measured before the export (see the docstring): the solids' box, and the
+    # meshes' own bounds, which no export disturbs.
+    bbox = enclosing(([] if shape is None else [shape.BoundingBox()])
+                     + [mesh_extent(mesh) for mesh in meshes])
+    _write_stl(shape, meshes, path)
     if not path.is_file():
         raise BuildError(f"{path.name} was not written")
 
@@ -250,7 +293,8 @@ def export_print_plate(prepared, out_dir):
     for obj in objects:
         drop_mesh(obj)
     # Bodies, not view objects: one object built with .add() is several parts.
-    bodies = sum(len(as_shapes(obj, PRINT_VIEW_ID)) for obj in objects)
+    bodies = (sum(len(as_shapes(obj, PRINT_VIEW_ID)) for obj in objects)
+              + len(meshes))
     print(f"  {path.name}: {bodies} parts, {path.stat().st_size / 1e6:.2f} MB")
     return bodies, bbox
 
@@ -277,8 +321,9 @@ def export_plate_3mfs(prepared, out_dir):
 
     Each part on a bed is an object of its own where the view put it, so the
     bed opens in a slicer laid out. Built from the `<key>.stl` files
-    `export_printables` already wrote and gated (closed, one body) rather than
-    by meshing the shapes again, so a bed holds the very mesh each part's own
+    `export_printables` already wrote and gated (closed, one body; a mesh only
+    warned about) rather than by meshing the shapes again, so a bed holds the
+    very mesh each part's own
     download holds. One object per catalogue key on the bed and one build item
     per reference: five references to `pin` are one object placed five times,
     and a slicer loads them as five instances of one part.
@@ -294,7 +339,7 @@ def export_plate_3mfs(prepared, out_dir):
     relative to each other -- and beds laid side by side in the view each land
     in the middle of their own.
 
-    Every leaf here is a printable with a solid shape of the catalogue's
+    Every leaf here is a printable, a solid or a mesh
     (`gate.check_print_layout`, `views._refuse_deformed_on_the_plate`), so its
     key's STL is on disk.
     """
@@ -343,23 +388,15 @@ def export_plate_3mfs(prepared, out_dir):
 
 
 def _placement(at, lift=None):
-    """`[R | t]` acting on a column vector: a reference's `at`, Z set to `lift`
-    when one is given.
+    """`[R | t]` of a reference's `at`, Z set to `lift` when one is given.
 
-    Read off the `gp_Trsf` as `gate._turns_about_z_only` reads it, 3 rows by 4
-    columns, the fourth the shift. On the `print` view that gate has already
-    refused an `at` that is not a `cq.Location` (or None) turning about Z.
+    On the `print` view `gate.check_print_layout` has already refused an `at`
+    that is not a `cq.Location` (or None) turning about Z.
     """
-    if at is None:
-        rows = [[1.0, 0.0, 0.0, 0.0], [0.0, 1.0, 0.0, 0.0],
-                [0.0, 0.0, 1.0, 0.0]]
-    else:
-        trsf = at.wrapped.Transformation()
-        rows = [[float(trsf.Value(row, col)) for col in (1, 2, 3, 4)]
-                for row in (1, 2, 3)]
+    rows = location_matrix(at)
     if lift is not None:
         rows[2][3] = lift
-    return rows + [[0.0, 0.0, 0.0, 1.0]]
+    return rows
 
 
 def render_previews(out_dir, stems, mode, parts=None, colors=None, scenes=None):

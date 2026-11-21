@@ -296,3 +296,60 @@ def test_the_parts_3mf_is_one_mesh_every_edge_between_two_triangles(out_dir):
     edges = collections.Counter(tuple(sorted(edge)) for a, b, c in triangles
                                 for edge in ((a, b), (b, c), (c, a)))
     assert triangles and set(edges.values()) == {2}
+
+
+# --------------------------------------------------------------------------
+# A printable that is a mesh: the same gates, and they only warn
+# --------------------------------------------------------------------------
+
+def _mesh_catalogue(mesh):
+    return catalogue(scan=("printable", mesh))
+
+
+def test_a_mesh_printable_is_written_as_stl_and_3mf_and_measured(out_dir,
+                                                                 capsys):
+    mesh = _box(20.0, 10.0, 4.0)
+    files, metrics = export_printables(_mesh_catalogue(mesh), out_dir)
+
+    assert files == {"scan": {"stl": "scan.stl", "3mf": "scan.3mf"}}
+    assert sorted(path.name for path in out_dir.iterdir()) == [
+        "scan.3mf", "scan.stl"]
+    # No B-rep counts: a mesh has no faces, edges or solids to count.
+    assert metrics["scan"] == pytest.approx({
+        "volume_mm3": 800.0, "bbox_mm": [20.0, 10.0, 4.0], "watertight": True,
+        "triangles": 12, "first_layer_mm2": 200.0, "overhang_mm2": 0.0})
+    assert "  scan: mesh, volume 0.80 cm3, watertight, 1 body, 12 triangles" \
+        in capsys.readouterr().out
+    # The 3MF is the loaded STL, identity placed, and the catalogue's mesh is
+    # the model's own, untouched.
+    with zipfile.ZipFile(out_dir / "scan.3mf") as package:
+        root = ET.fromstring(package.read(MODEL_PATH))
+    assert len(list(root.iter(f"{{{CORE_NAMESPACE}}}triangle"))) == 12
+    assert len(trimesh.load(str(out_dir / "scan.stl")).faces) == 12
+    assert mesh.vertices.tolist() == _box(20.0, 10.0, 4.0).vertices.tolist()
+
+
+def _open_box():
+    """A box missing one triangle: a hole in the surface."""
+    box = _box(20.0, 10.0, 4.0)
+    return trimesh.Trimesh(vertices=box.vertices, faces=box.faces[:-1],
+                           process=False)
+
+
+@pytest.mark.parametrize("mesh, said", [
+    (_open_box(), "exports a mesh that is not watertight"),
+    (trimesh.util.concatenate(_box(20.0, 10.0, 4.0),
+                              _box(20.0, 10.0, 4.0)
+                              .apply_translation((50.0, 0.0, 0.0))),
+     "is 2 disconnected pieces, not one body"),
+    (_box(20.0, 10.0, 0.5),
+     "measures [20.0, 10.0, 0.5] mm, so its smallest dimension is 0.500 mm"),
+    (_tilted(_box(20.0, 10.0, 5.0), 45.0), "touches the bed at nothing"),
+])
+def test_every_gate_that_refuses_a_solid_only_warns_about_a_mesh(
+        mesh, said, out_dir, capsys):
+    files, _metrics = export_printables(_mesh_catalogue(mesh), out_dir)
+
+    assert f"warning: printable 'scan' (a mesh) {said}" in capsys.readouterr().out
+    assert set(files["scan"]) == {"stl", "3mf"}
+    assert (out_dir / "scan.3mf").is_file()
