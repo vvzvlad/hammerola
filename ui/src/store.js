@@ -1,14 +1,14 @@
 // Everything these pages remember in the browser, and nothing else.
 //
-// Eleven things are kept, all under the `hammerola.` prefix the rest of the site
-// uses (`hammerola.pointing_device`, viewport/options.js). Ten live in
+// Twelve things are kept, all under the `hammerola.` prefix the rest of the site
+// uses (`hammerola.pointing_device`, viewport/options.js). Eleven live in
 // `localStorage`; the theme is a cookie because the server has to know it to
-// send the page already painted (see the theme section). Three of the ten are
+// send the page already painted (see the theme section). Three of the eleven are
 // keyed by project (notes, the pointer, and the BOM's Sourced and Placed marks,
 // by design too) so that editing one model and viewing another do not collide;
 // the token, the project-list arrangement, the tab strip, whether it is drawn,
-// the retina setting, the camera's perspective and the hover highlight are one
-// key for the whole site.
+// the retina setting, the camera's perspective, the hover highlight and the
+// Studio look are one key for the whole site.
 //
 // EVERY access goes through the two functions at the top and the cookie's two
 // at the bottom. `localStorage` and `document.cookie` THROW on the getter in a
@@ -335,6 +335,20 @@ const HOVER_HIGHLIGHT_KEY = `${NS}hover_highlight`;
 export const readHoverHighlight = () => read(HOVER_HIGHLIGHT_KEY) === 'on';
 
 export const writeHoverHighlight = (on) => write(HOVER_HIGHLIGHT_KEY, on ? 'on' : 'off');
+
+// -- whether the model is drawn in Studio ------------------------------------
+// The Settings card's "Studio mode": on, the model is drawn for showing — a
+// studio's light, no edges, a shadow on the ground (`setStudio` in the viewer);
+// off, the usual drawing. The owner asked it kept between projects, so it is
+// one key for the whole site, like the camera.
+//
+// Nothing stored reads as off; only the exact word `on` turns it on.
+
+const STUDIO_KEY = `${NS}studio`;
+
+export const readStudio = () => read(STUDIO_KEY) === 'on';
+
+export const writeStudio = (on) => write(STUDIO_KEY, on ? 'on' : 'off');
 
 // -- whether the header draws the strip of projects --------------------------
 // The Settings card's "Project tabs". The owner found the strip in the way, so

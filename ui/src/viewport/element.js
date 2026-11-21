@@ -79,8 +79,8 @@ const INITIAL_STATE = {
   // Whether the component under the cursor is tinted — the interface's
   // "Hover highlight" setting (store.js remembers it).
   hoverHighlight: false,
-  // The bar's Studio: the fork's studio look (`Viewer.setStudio`), not the
-  // library's Studio tab.
+  // Settings' Studio mode: the fork's studio look (`Viewer.setStudio`), not
+  // the library's Studio tab.
   studio: false,
   tool: null,
   // Whether a plain left press on a part a joint moves drags that joint

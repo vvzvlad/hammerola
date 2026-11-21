@@ -546,7 +546,7 @@ describe('the page of a build with no model', () => {
   })
 
   it('draws the model\'s bar, the tools about a model out of service, Fit and Frame live where the view can, Settings live', async () => {
-    const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Studio', 'Frame', 'Settings']
+    const TOOLS = ['Measure', 'Insets', 'Comment', 'Add primitive', 'Fit', 'Frame', 'Settings']
     const drawn = (extra) => texts(page('list.md', extra)).filter((word) => TOOLS.includes(word))
     expect(drawn({})).toEqual(TOOLS)
     // a narrow window keeps the list and Fit, as the model's page does
@@ -559,13 +559,12 @@ describe('the page of a build with no model', () => {
     const bar = (extra) => docBar({ meta: META, doc: META.documents[2], onPick: () => {}, ...extra })
     const off = (values, key) => css(values[key]).pointerEvents === 'none'
     const KEYS = ['measureBtnStyle', 'insetsBtnStyle', 'commentBtnStyle', 'proposalBtnStyle', 'fitBtnStyle',
-      'studioBtnStyle', 'frameBtnStyle', 'settingsBtnStyle']
-    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true, true, false])
+      'frameBtnStyle', 'settingsBtnStyle']
+    expect(KEYS.map((key) => off(bar({}), key))).toEqual([true, true, true, true, true, true, false])
     const blob = new Blob(['png'], { type: 'image/png' })
     const tools = { fit: vi.fn(), frame: vi.fn(async () => blob) }
     const live = bar({ tools })
-    // Studio is about a model's canvas, which this page has none of
-    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, true, false, true, false, false])
+    expect(KEYS.map((key) => off(live, key))).toEqual([true, true, true, true, false, false, false])
     // Insets where the view hands them (a KiCad design's, KicadView.jsx), lit while the mode is on
     const insets = { on: true, toggle: vi.fn() }
     const kicad = bar({ tools: { ...tools, insets } })
@@ -696,10 +695,10 @@ describe('the shell', () => {
     expect(shell.render().props.active).toBe('report.pdf')
   })
 
-  it('opens Settings, its Retina, Perspective and Hover highlight rows out of service and Project tabs handed up to BuildPage', () => {
+  it('opens Settings, its rows about a model out of service and Project tabs handed up to BuildPage', () => {
     // The owner asked why the project tabs could not be switched here: they
-    // are about the whole site. Retina, Perspective and Hover highlight are
-    // about a model's canvas, and this page has none.
+    // are about the whole site. Retina, Perspective, Hover highlight and
+    // Studio mode are about a model's canvas, and this page has none.
     mount('')
     const onTabStrip = vi.fn()
     shell.props = { ...shell.props, tabStrip: false, onTabStrip }
@@ -712,8 +711,9 @@ describe('the shell', () => {
     bar().tSettings(CLICK)
     expect(css(bar().settingsMenuStyle).display).toBe('block')
     expect(texts(DocPage(shell.render().props)))
-      .toEqual(expect.arrayContaining(['Retina resolution', 'Perspective', 'Hover highlight', 'Project tabs']))
-    for (const key of ['retina', 'perspective', 'hover']) {
+      .toEqual(expect.arrayContaining(['Retina resolution', 'Perspective', 'Hover highlight', 'Studio mode',
+        'Project tabs']))
+    for (const key of ['retina', 'perspective', 'hover', 'studio']) {
       expect(css(row(key).style).pointerEvents).toBe('none')
       expect(row(key).onClick).toBeUndefined()
     }
@@ -737,7 +737,7 @@ describe('the shell', () => {
     shell.setState = (patch) => Object.assign(shell.state, patch)
     expect(shell.state).toEqual({
       active: SCHEMATIC.id, viewsOpen: false, settingsOpen: false, retina: true, perspective: false,
-      hoverHighlight: false, tools: null,
+      hoverHighlight: false, studio: false, tools: null,
       narrow: false, ...AT_REST,
     })
     // the door a row of the menu on the schematic opens the board through

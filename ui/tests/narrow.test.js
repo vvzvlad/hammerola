@@ -876,7 +876,7 @@ describe('the bar short of room', () => {
     const look = quietBtn(false)
     act(() => root.render(toolBar({
       viewMenu: false, viewTabs: [{ key: 'a', label: 'assembled', hint: '', onClick() {} }], showTools: true,
-      ...Object.fromEntries(['measure', 'insets', 'comment', 'proposal', 'fit', 'studio', 'frame', 'settings']
+      ...Object.fromEntries(['measure', 'insets', 'comment', 'proposal', 'fit', 'frame', 'settings']
         .map((tool) => [`${tool}BtnStyle`, look])),
     })))
     const box = layer.firstElementChild

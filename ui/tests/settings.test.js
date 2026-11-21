@@ -1,7 +1,7 @@
 // The Settings card at the right end of the floating toolbar, and the answers it
 // holds: whether the model is drawn at the display's full density, whether its
-// camera is perspective, whether the face under the cursor is tinted, and
-// whether the header draws its strip of projects.
+// camera is perspective, whether the face under the cursor is tinted, whether
+// it is drawn in Studio, and whether the header draws its strip of projects.
 //
 // NOTHING IS MOUNTED, this directory's arrangement (viewmenu.test.js): the real
 // prototype over a hand-spelled state, the real `computed()` and handlers. `sync`
@@ -12,7 +12,7 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
 import { STATE } from '../src/events.js'
-import { readHoverHighlight, readPerspective, readRetina } from '../src/store.js'
+import { readHoverHighlight, readPerspective, readRetina, readStudio } from '../src/store.js'
 import { css } from '../src/style.jsx'
 import { headerOn, makeComponent, replaceState } from './component.js'
 import { texts } from './eltree.js'
@@ -168,6 +168,38 @@ describe('the Settings card', () => {
     expect(readHoverHighlight()).toBe(false)
   })
 
+  it('flips Studio mode on its row, remembers it and tells the viewport', () => {
+    // Off where nothing was stored: the usual drawing, edges and all. The
+    // owner asked it kept between projects, so a page built later starts in it.
+    const seen = listening()
+    const c = component({ settingsOpen: true, studio: false })
+    expect(texts(c.render())).toContain('Studio mode')
+    expect(row(c, 'studio').mark).toBe('')
+
+    row(c, 'studio').onClick(click)
+    expect(c.state.studio).toBe(true)
+    expect(seen.at(-1).studio).toBe(true)
+    expect(readStudio()).toBe(true)
+    expect(row(c, 'studio').mark).toBe('✓')
+    expect(new HammerolaViewer({}).state.studio).toBe(true)
+
+    row(c, 'studio').onClick(click)
+    expect(seen.at(-1).studio).toBe(false)
+    expect(readStudio()).toBe(false)
+  })
+
+  it('greys Studio mode where no model view is on screen: none declared, or one under a document', () => {
+    const meta = { project: 'fixture', title: 'Fixture', commit: 'abc1234', parts: {}, views: [] }
+    const NOTES = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 9 }
+    const viewed = component().state.meta
+    for (const c of [component({ meta, studio: true }),
+      component({ meta: { ...viewed, documents: [NOTES] }, doc: NOTES.id, studio: true })]) {
+      expect(css(row(c, 'studio').style).pointerEvents).toBe('none')
+      expect(row(c, 'studio').onClick).toBeUndefined()
+      expect(row(c, 'studio').mark).toBe('✓')
+    }
+  })
+
   it('hands the flip of Project tabs up to BuildPage, which owns the answer', () => {
     // The header is not this page's, so the row writes nothing here: it calls
     // BuildPage's door, and its tick is the prop that comes back down.
@@ -184,11 +216,11 @@ describe('the Settings card', () => {
     expect(onTabStrip).toHaveBeenLastCalledWith(false)
   })
 
-  it('stays in service over a document, its Retina, Perspective and Hover highlight rows out of service there', () => {
+  it('stays in service over a document, its rows about the model out of service there', () => {
     // The owner asked why the project tabs could not be switched over a
-    // document: they are about the whole site. Retina, Perspective and Hover
-    // highlight are about the model's canvas, which the document covers, so
-    // their rows are grey.
+    // document: they are about the whole site. Retina, Perspective, Hover
+    // highlight and Studio mode are about the model's canvas, which the
+    // document covers, so their rows are grey.
     const DOC = { id: 'notes.md', name: 'notes.md', type: 'markdown', file: 'notes.md', bytes: 10 }
     const meta = { project: 'fixture', title: 'Fixture', commit: 'abc1234', parts: {}, views: [], documents: [DOC] }
     const onTabStrip = vi.fn()
@@ -199,7 +231,7 @@ describe('the Settings card', () => {
     expect(css(c.computed().settingsBtnStyle).pointerEvents).toBeUndefined()
     c.computed().tSettings(click)
     expect(css(c.computed().settingsMenuStyle).display).toBe('block')
-    for (const key of ['retina', 'perspective', 'hover']) {
+    for (const key of ['retina', 'perspective', 'hover', 'studio']) {
       expect(css(row(c, key).style).pointerEvents).toBe('none')
       expect(row(c, key).onClick).toBeUndefined()
     }

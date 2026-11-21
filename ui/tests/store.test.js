@@ -25,10 +25,10 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import {
   clearToken, forgetTab, readAssembly, readHoverHighlight, readNotes, readPerspective, readProjectSort,
-  readProjectView, readRetina,
+  readProjectView, readRetina, readStudio,
   readTabs, readTabStrip, readToken, rememberPointer, rememberTab, TAB_CAP, writeAssembly, writeNotes,
-  writeHoverHighlight, writePerspective, writeProjectSort, writeProjectView, writeRetina, writeTabStrip,
-  writeToken,
+  writeHoverHighlight, writePerspective, writeProjectSort, writeProjectView, writeRetina, writeStudio,
+  writeTabStrip, writeToken,
 } from '../src/store.js'
 
 const POINTER_KEY = 'hammerola.pointer.proj1'
@@ -639,6 +639,21 @@ describe('the hover highlight setting', () => {
     expect(readHoverHighlight()).toBe(true)
     writeHoverHighlight(false)
     expect(readHoverHighlight()).toBe(false)
+  })
+})
+
+// -- the studio setting ------------------------------------------------------
+// Whether the model is drawn in Studio. One site-wide key, so it holds from
+// project to project, and NOTHING STORED IS OFF — the usual drawing.
+
+describe('the studio setting', () => {
+  it('reads OFF where nothing was stored, ON once turned on, under one key', () => {
+    expect(readStudio()).toBe(false)
+    writeStudio(true)
+    expect([...storage.cells.keys()]).toEqual(['hammerola.studio'])
+    expect(readStudio()).toBe(true)
+    writeStudio(false)
+    expect(readStudio()).toBe(false)
   })
 })
 
