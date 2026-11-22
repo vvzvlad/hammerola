@@ -8,8 +8,8 @@ is the project's code.
 
   * `glb(view, parts)` -- one view, read and tessellated by the build's own
     code (`build.build`), written out as a binary glTF.
-  * `compress(glb)` -- gltf-transform's `optimize` with Draco, the Node.js
-    tool the Dockerfile's `gltf` stage installs.
+  * `compress(glb, simplify_error=0.001)` -- gltf-transform's `optimize` with
+    Draco, the Node.js tool the Dockerfile's `gltf` stage installs.
 
 No module-level import of the CAD kernel or numpy, as in the rest of the
 package (src/cadbuild/__init__.py).
@@ -44,12 +44,16 @@ GLTF_TRANSFORM = "/opt/gltf/node_modules/@gltf-transform/cli/bin/cli.js"
 # process peaks at 5.3 GB of address space.
 NODE_FLAGS = ("--disable-wasm-trap-handler", "--wasm-max-mem-pages=6144")
 
-# What `optimize` is told after its two paths: Draco, simplification within an
-# error of 0.001 of the mesh's extent, and no texture pass (a view has none).
+# What `optimize` is told after its two paths: Draco and no texture pass (a
+# view has none); then the simplification's error, `compress`'s argument.
+OPTIMIZE_OPTIONS = ("--compress", "draco", "--texture-compress", "false")
+
+# The simplification's error by default, as a share of the mesh's extent.
 # Measured on four real boards with their copper left out: 0.06-0.59 MB, and at
-# most 0.45 % of a frame's pixels differ from the uncompressed GLB.
-OPTIMIZE_OPTIONS = ("--compress", "draco", "--texture-compress", "false",
-                    "--simplify-error", "0.001")
+# most 0.45 % of a frame's pixels differ from the uncompressed GLB. Text drawn
+# as geometry, a sticker's, falls apart at it: on the WB-MSW v.4 sensor (an
+# 86 mm case) it keeps its letters at 0.0001, 0.43 MB against 0.23 MB.
+SIMPLIFY_ERROR = 0.001
 
 # A view is drawn in millimetres, and glTF is in metres.
 METRES_PER_MM = 0.001
@@ -95,15 +99,17 @@ class Hub:
                 (Path(scratch) / entry["file"]).read_text(encoding="utf-8"))
         return document_glb(document)
 
-    def compress(self, glb):
-        """The bytes of a GLB through `gltf-transform optimize` (OPTIMIZE_OPTIONS)."""
+    def compress(self, glb, simplify_error=SIMPLIFY_ERROR):
+        """The bytes of a GLB through `gltf-transform optimize` (OPTIMIZE_OPTIONS),
+        simplified within `simplify_error` of the mesh's extent."""
         with tempfile.TemporaryDirectory() as scratch:
             source = Path(scratch) / "in.glb"
             target = Path(scratch) / "out.glb"
             source.write_bytes(glb)
             run = subprocess.run(
                 [NODE, *NODE_FLAGS, GLTF_TRANSFORM, "optimize", str(source),
-                 str(target), *OPTIMIZE_OPTIONS],
+                 str(target), *OPTIMIZE_OPTIONS,
+                 "--simplify-error", str(simplify_error)],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 errors="replace")
             if run.returncode != 0:

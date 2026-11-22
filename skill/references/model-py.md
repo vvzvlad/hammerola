@@ -205,7 +205,9 @@ board of the project, which the hub exports on every build
   it: `view` is a dict shaped as an entry of `views()`, `parts` a catalogue
   shaped as `parts()` returns. `hub.compress(glb)` returns it Draco-compressed
   and simplified (gltf-transform's `optimize`, with Draco and a simplification
-  error of 0.001). A board shown outside without its routing takes
+  error of 0.001 of the mesh's extent); text drawn as geometry, such as a
+  sticker's, falls apart at that and keeps its letters with
+  `hub.compress(glb, simplify_error=0.0001)`, about twice the bytes. A board shown outside without its routing takes
   `records(..., copper="none")` or `copper="pads"` (`references/boards.md`). The
   hub keeps nothing of it: the function sends the bytes on itself, with what the
   environment gives it — the hub's variables named `BUILD_ENV_*` reach the build

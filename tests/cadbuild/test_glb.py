@@ -6,14 +6,35 @@ Node.js, which only the hub's image has: check (k) in ci/smoke.py runs it there.
 """
 
 import json
+from pathlib import Path
 import struct
 from types import SimpleNamespace
 
 import pytest
 
+from src.cadbuild import publish
 from src.cadbuild.parts import read_catalogue
 from src.cadbuild.publish import Hub
 from src.cadbuild.views import export_views, prepare_views
+
+
+def test_compress_hands_optimize_the_simplification_error_it_is_given(monkeypatch):
+    """The error a model asks for reaches `optimize`; without one it is 0.001.
+
+    node itself is not run here (see the module's docstring): the command is
+    caught, and the GLB it would write is written in its place.
+    """
+    commands = []
+
+    def run(command, **_):
+        commands.append(command)
+        Path(command[command.index("optimize") + 2]).write_bytes(b"compressed")
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(publish.subprocess, "run", run)
+    assert Hub().compress(b"glb") == b"compressed"
+    assert Hub().compress(b"glb", simplify_error=0.0001) == b"compressed"
+    assert [c[c.index("--simplify-error") + 1] for c in commands] == ["0.001", "0.0001"]
 
 
 def _gltf(glb):
