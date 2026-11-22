@@ -56,6 +56,15 @@ branch onto it once it has. A name is text the build only carries, so the
 commit is published as a copy of a build of the tip's project with the name
 rewritten; only a tip whose project tree neither the tip's own build nor the
 variant's `latest` holds is built, as a pushed commit is.
+
+Files changed on the page — written, deleted or moved in the Files window —
+are one commit made by the hub (`commit_changes`): the request is answered with
+a job at once, the commit is built in the ordinary queue, and the branch moves
+onto it from the worker once the build has published (`BuildTask.after_publish`),
+from the tip the commit was made on. A commit that does not build, or whose
+branch moved meanwhile, leaves the branch where it was. Once the branch has
+moved the new revision is `latest`, so `published(hub)` is scheduled for it as
+after a push, without waiting.
 """
 
 import ast
@@ -66,11 +75,12 @@ import time
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
+from functools import partial
 from pathlib import Path
 
 from loguru import logger
 
-from src import render
+from src import pagecommit, render
 from src.buildproc import STATUS_CPU_EXHAUSTED, STATUS_TIMEOUT
 from src.docsbuild import DOCUMENTS_FIELD, VIEWS_FIELD, project_names
 from src.errors import PublishError
@@ -97,7 +107,8 @@ MAIN_DELETION_REFUSAL = (f"the default variant {MAIN_BRANCH} cannot be deleted; 
 PROJECT_FILE = "project.json"
 
 # Who the commits the hub makes itself are by: a name changed on the page
-# (`commit_name`), so `git log` tells them from the author's own.
+# (`commit_name`) and files (`commit_changes`), so `git log` tells them from
+# the author's own.
 HUB_IDENTITY = {"GIT_AUTHOR_NAME": "hammerola hub",
                 "GIT_AUTHOR_EMAIL": "hub@hammerola.invalid",
                 "GIT_COMMITTER_NAME": "hammerola hub",
@@ -467,35 +478,47 @@ def _wait(jobs, job_id: str) -> dict:
     return record
 
 
+def _queue_build(store: Store, jobs, builds, repo, pid: str, env: dict,
+                 tree_ish: str, name: str, *, force: bool, message: str | None,
+                 variant: str, after_publish=None) -> tuple:
+    """Check `tree_ish`, a project directory, out and hand it to the pool as a
+    `BuildTask` published under `name`. -> (the job's id, None), or (None, the
+    reason it was not handed over). Raises CalledProcessError."""
+    sources = store.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
+    handed_over = False
+    try:
+        _checkout(store, repo, env, tree_ish, sources)
+        digest = run_git(repo, "rev-parse", tree_ish, env=env).strip()
+        job_id = jobs.create(pid, name)["id"]
+        why = _hand_over(jobs, builds, job_id, BuildTask(
+            job_id=job_id, pid=pid, commit=name, sources=sources,
+            digest=digest, force=force, message=message, variant=variant,
+            after_publish=after_publish))
+        handed_over = why is None
+    finally:
+        if not handed_over:
+            shutil.rmtree(sources, ignore_errors=True)
+    return (job_id, None) if why is None else (None, why)
+
+
 def _build(store: Store, jobs, builds, repo, pid: str, env: dict, plan: Plan,
            force: bool, say) -> str:
     """Build and publish one ref's target, printing its log. -> the address
     it was published at. Raises Refused."""
-    tree_ish = f"{plan.target}:{plan.directory}"
-    sources = store.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
-    handed_over = False
     try:
-        try:
-            _checkout(store, repo, env, tree_ish, sources)
-            digest = run_git(repo, "rev-parse", tree_ish, env=env).strip()
-            message = None if plan.draft else revision_message(run_git(
-                repo, "log", "-1", "--format=%s", plan.target, env=env))
-        except subprocess.CalledProcessError as error:
-            raise Refused(plan.ref, git_failure(error)) from error
+        message = None if plan.draft else revision_message(run_git(
+            repo, "log", "-1", "--format=%s", plan.target, env=env))
         say(f"building {plan.target[:12]} for {plan.ref}")
-        name = DEV_LINK if plan.draft else plan.target
-        job_id = jobs.create(pid, name)["id"]
-        why = _hand_over(jobs, builds, job_id, BuildTask(
-            job_id=job_id, pid=pid, commit=name, sources=sources,
-            digest=digest, force=force, message=message,
-            variant=plan.variant))
-        if why is not None:
-            raise Refused(plan.ref, why + "; push again"
-                          if why == STOPPING else why)
-        handed_over = True
-    finally:
-        if not handed_over:
-            shutil.rmtree(sources, ignore_errors=True)
+        job_id, why = _queue_build(
+            store, jobs, builds, repo, pid, env,
+            f"{plan.target}:{plan.directory}",
+            DEV_LINK if plan.draft else plan.target, force=force,
+            message=message, variant=plan.variant)
+    except subprocess.CalledProcessError as error:
+        raise Refused(plan.ref, git_failure(error)) from error
+    if why is not None:
+        raise Refused(plan.ref, why + "; push again"
+                      if why == STOPPING else why)
 
     record = _wait(jobs, job_id)
     for line in (jobs.log(job_id) or "").splitlines():
@@ -550,8 +573,8 @@ def _published(store: Store, jobs, builds, repo, pid: str, variant: str,
         before = None if old == ZERO else store.nearest_build(pid, old)
         if build is None or build == before:
             return
-        tree = _built_tree(store, pid, build)
-        if tree is None or not _defines_published(repo, tree):
+        tree = _published_tree(store, repo, pid, build)
+        if tree is None:
             return
         why = _call_published(store, jobs, builds, repo, pid, variant, build,
                               tree, say)
@@ -565,27 +588,38 @@ def _published(store: Store, jobs, builds, repo, pid: str, variant: str,
             f"without it")
 
 
-def _call_published(store: Store, jobs, builds, repo, pid: str, variant: str,
-                    build: str, tree: str, say) -> str | None:
-    """Hand `tree` to the pool as a `PublishedTask` and print its log. -> None
-    when `published()` finished, else the end of the sentence saying why not."""
+def _start_published(store: Store, jobs, builds, repo, pid: str,
+                     variant: str, build: str, tree: str) -> tuple:
+    """Hand `tree` to the pool as a `PublishedTask`. -> (the job's id, None),
+    or (None, the end of the sentence saying why it was not called)."""
     sources = store.root / f"{SOURCE_PREFIX}{uuid.uuid4().hex}"
     handed_over = False
     try:
         try:
             _checkout(store, repo, {}, tree, sources)
         except subprocess.CalledProcessError as error:
-            return f"was not called: {git_failure(error)}"
+            return None, f"was not called: {git_failure(error)}"
         job_id = jobs.create(pid, build)["id"]
         refusal = _hand_over(jobs, builds, job_id, PublishedTask(
             job_id=job_id, pid=pid, variant=variant, revision=build,
             sources=sources))
         if refusal is not None:
-            return f"was not called: {refusal}"
+            return None, f"was not called: {refusal}"
         handed_over = True
     finally:
         if not handed_over:
             shutil.rmtree(sources, ignore_errors=True)
+    return job_id, None
+
+
+def _call_published(store: Store, jobs, builds, repo, pid: str, variant: str,
+                    build: str, tree: str, say) -> str | None:
+    """Hand `tree` to the pool as a `PublishedTask` and print its log. -> None
+    when `published()` finished, else the end of the sentence saying why not."""
+    job_id, why = _start_published(store, jobs, builds, repo, pid, variant,
+                                   build, tree)
+    if why is not None:
+        return why
     say(f"published() for {variant} at {build[:12]}")
     record = _wait(jobs, job_id)
     for line in (jobs.log(job_id) or "").splitlines():
@@ -593,6 +627,34 @@ def _call_published(store: Store, jobs, builds, repo, pid: str, variant: str,
     if record["state"] == STATE_DONE:
         return None
     return record.get("error") or "did not finish"
+
+
+def _schedule_published(store: Store, jobs, builds, repo, pid: str,
+                        variant: str, build: str) -> None:
+    """Hand the pool the `published(hub)` of `build`, the revision a commit
+    made on the page moved the variant's branch onto, when its model.py defines
+    one, and do not wait for it. The caller is a pool worker, and a worker that
+    waited for another job of its own pool would leave the pool deadlocked once
+    every worker did. A refusal or a failure is a warning: the commit and the
+    branch stand."""
+    why = None
+    try:
+        tree = _published_tree(store, repo, pid, build)
+        if tree is not None:
+            _job, why = _start_published(store, jobs, builds, repo, pid,
+                                         variant, build, tree)
+    except Exception:
+        logger.exception(f"published() {pid} {variant} at {build}")
+        why = "was not called: internal error"
+    if why is not None:
+        logger.warning(f"page commit {pid} {variant}: published() at "
+                       f"{build}: {why}")
+
+
+def _published_tree(store: Store, repo, pid: str, build: str) -> str | None:
+    """The tree of `build` when its model.py defines `published`, else None."""
+    tree = _built_tree(store, pid, build)
+    return tree if tree is not None and _defines_published(repo, tree) else None
 
 
 def _defines_published(repo, tree: str) -> bool:
@@ -632,12 +694,9 @@ def commit_name(store: Store, jobs, builds, pid: str, variant: str, kind: str,
     """
     repo = store.repo_dir(pid)
     ref = f"{BRANCH_PREFIX}{variant}"
-    try:
-        tip = run_git(repo, "rev-parse", "--verify", "--quiet",
-                      f"{ref}^{{commit}}").strip()
-    except subprocess.CalledProcessError:
+    tip = _tip(repo, ref)
+    if tip is None:
         return 404, f"no variant {variant}"
-    index = store.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
     try:
         directory = _project_directory(repo, pid, tip, ref, {})
         path = f"{directory}/{PROJECT_FILE}" if directory else PROJECT_FILE
@@ -645,13 +704,10 @@ def commit_name(store: Store, jobs, builds, pid: str, variant: str, kind: str,
         subject = _rename(store, pid, variant, project, kind, item, name)
         blob = run_git(repo, "hash-object", "-w", "--stdin", input=json.dumps(
             project, indent=1, ensure_ascii=False) + "\n").strip()
-        staged = {"GIT_INDEX_FILE": str(index)}
-        run_git(repo, "read-tree", tip, env=staged)
-        run_git(repo, "update-index", "--cacheinfo",
-                f"100644,{blob},{path}", env=staged)
-        tree = run_git(repo, "write-tree", env=staged).strip()
-        commit = run_git(repo, "commit-tree", tree, "-p", tip, "-m", subject,
-                         env=HUB_IDENTITY).strip()
+        commit = _commit_onto(
+            store, repo, tip, subject, lambda staged: run_git(
+                repo, "update-index", "--cacheinfo", f"100644,{blob},{path}",
+                env=staged))
         source = (store.built_build(pid, tip)
                   or _same_tree_build(store, repo, pid, variant, tip,
                                       directory))
@@ -673,19 +729,214 @@ def commit_name(store: Store, jobs, builds, pid: str, variant: str, kind: str,
         return 422, str(refusal)
     except subprocess.CalledProcessError as error:
         return 500, git_failure(error)
+    if not _advance(store, repo, pid, ref, tip, commit):
+        return 409, "the branch moved while renaming; rename again"
+    logger.info(f"rename {pid} {variant}: {subject}: {commit}")
+    return 200, {"commit": commit, "build_url": url}
+
+
+def _tip(repo, ref: str) -> str | None:
+    """The commit `ref` is at, or None when the repository has no such ref."""
+    try:
+        return run_git(repo, "rev-parse", "--verify", "--quiet",
+                       f"{ref}^{{commit}}").strip()
+    except subprocess.CalledProcessError:
+        return None
+
+
+def _commit_onto(store: Store, repo, tip: str, message: str, stage,
+                 verify=None) -> str:
+    """A commit by the hub, with `message`, on `tip`, whose tree is `tip`'s as
+    `stage` changes it. -> its sha.
+
+    Made with git's plumbing from a temporary index, so no work tree is
+    involved: `stage(env)` runs git on the index with the environment it is
+    given, and `verify(tree)`, when there is one, may refuse the tree before
+    it is committed.
+    """
+    index = store.root / f"{JSON_TMP_PREFIX}index-{uuid.uuid4().hex}"
+    try:
+        staged = {"GIT_INDEX_FILE": str(index)}
+        run_git(repo, "read-tree", tip, env=staged)
+        stage(staged)
+        tree = run_git(repo, "write-tree", env=staged).strip()
+        if verify is not None:
+            verify(tree)
+        return run_git(repo, "commit-tree", tree, "-p", tip, "-m", message,
+                       env=HUB_IDENTITY).strip()
     finally:
         index.unlink(missing_ok=True)
+
+
+def _advance(store: Store, repo, pid: str, ref: str, tip: str,
+             commit: str) -> bool:
+    """Move `ref` from `tip` onto `commit`, and let `latest` follow the branch
+    as at the end of a push (`githttp.end_of_request`). -> False when `ref`
+    was no longer at `tip`: whoever moved it meanwhile wins. The project failing
+    to catch up is logged, and the move stands."""
     try:
         run_git(repo, "update-ref", ref, commit, tip)
     except subprocess.CalledProcessError:
-        return 409, "the branch moved while renaming; rename again"
-    logger.info(f"rename {pid} {variant}: {subject}: {commit}")
+        return False
     try:
         store.recompute(pid)
     except Exception:
-        logger.exception(f"rename {pid} {variant}: the project could not be "
-                         f"brought up to date after the rename")
-    return 200, {"commit": commit, "build_url": url}
+        logger.exception(f"{pid} {ref}: the project could not be brought up "
+                         f"to date after the branch moved")
+    return True
+
+
+def commit_changes(store: Store, jobs, builds, mirror, pid: str,
+                   request: dict) -> tuple:
+    """Commit the changes `request` lists to the files of the project directory
+    on `variant`'s branch, and build that commit in the background.
+    -> (202, the job and the commit), (200, the tip, `already`) when the
+    branch has all of it, or (status, the refusal's JSON).
+
+    `request` is the body of `POST /api/v1/source/<pid>/commit`, a parsed JSON
+    object (`pagecommit` checks what is in it). The changes are laid against
+    the files of the build `base`, the one the window showed, and of the tip:
+    only what the tip has not got is committed, and a path that differs
+    between the two refuses, unless that change says `over`
+    (`pagecommit.decide`). The commit is the hub's, on the tip, made from the
+    paths `pagecommit.index_records` lays out with one `update-index
+    --index-info` (the one way to delete without a work tree), and its
+    project.json must stay where it was, a JSON object with this project's id.
+
+    The branch does not move here. The commit is published as a revision
+    like a pushed one, from the worker, which then moves the branch onto it
+    and does the rest (`_after_page_commit`); until then the branch is
+    where it was, and a build that fails leaves it so.
+    """
+    variant = request.get("variant")
+    repo = store.repo_dir(pid)
+    ref = f"{BRANCH_PREFIX}{variant}"
+    tip = _tip(repo, ref) if store.valid_variant(variant) else None
+    if tip is None:
+        return 404, {"error": "not found"}
+    try:
+        message = pagecommit.parse_message(request)
+        changes = pagecommit.parse_changes(request)
+        _refuse_missing_blobs(repo, changes)
+        base_name = request.get("base")
+        base_tree = None
+        if isinstance(base_name, str) and store.valid_build_id(base_name):
+            base_tree = store.source_tree(pid, store.build_dir(pid, base_name))
+        if base_tree is None:
+            raise pagecommit.ChangeRefused(422, f"no files of build {base_name}")
+        directory = _project_directory(repo, pid, tip, ref, {})
+        base = _tree_files(repo, base_tree)
+        current = _tree_files(repo, f"{tip}:{directory}")
+        changes = pagecommit.decide(changes, base, current, base_name)
+        if not changes:
+            return 200, {"commit": tip, "already": True}
+        records = pagecommit.index_records(changes, base, current)
+        commit = _commit_onto(
+            store, repo, tip, message,
+            lambda staged: _stage(repo, staged, directory, records),
+            lambda tree: _verify_project_file(repo, pid, directory, tree))
+        _project_directory(repo, pid, commit, ref, {})
+        job_id, why = _queue_build(
+            store, jobs, builds, repo, pid, {}, f"{commit}:{directory}",
+            commit, force=False,
+            message=revision_message(run_git(
+                repo, "log", "-1", "--format=%s", commit).strip()),
+            variant=variant, after_publish=partial(
+                _after_page_commit, store, jobs, builds, mirror, pid, variant,
+                tip, commit))
+    except pagecommit.ChangeRefused as refusal:
+        logger.warning(f"page commit {pid} {variant}: refused: {refusal}")
+        return refusal.status, refusal.payload
+    except Refused as refusal:
+        logger.warning(f"page commit {pid} {variant}: refused: {refusal}")
+        return 422, {"error": str(refusal)}
+    except subprocess.CalledProcessError as error:
+        return 500, {"error": git_failure(error)}
+    if why is not None:
+        logger.warning(f"page commit {pid} {variant}: not built: {why}")
+        return 503, {"error": why + "; commit again"
+                     if why == STOPPING else why}
+    logger.info(f"page commit {pid} {variant}: {commit} queued as job {job_id}")
+    return 202, {"job": job_id, "commit": commit,
+                 "status_url": f"/api/v1/jobs/{job_id}"}
+
+
+def _after_page_commit(store: Store, jobs, builds, mirror, pid: str,
+                       variant: str, tip: str, commit: str) -> None:
+    """What the worker does once the build of a page commit has published
+    (`BuildTask.after_publish`): move the branch from `tip` onto `commit`, then
+    queue the mirror and the model's `published(hub)` for the new revision.
+    Raises PublishError when the branch is no longer at `tip` and not already
+    at `commit`. What goes wrong after the branch has moved is logged and does
+    not fail the job."""
+    repo = store.repo_dir(pid)
+    ref = f"{BRANCH_PREFIX}{variant}"
+    if not _advance(store, repo, pid, ref, tip, commit):
+        # Two identical requests in one second make the same commit: the job
+        # that lost the race finds the branch already on it.
+        if _tip(repo, ref) == commit:
+            return
+        raise PublishError(409, "the branch moved while this commit was "
+                                "building; commit again")
+    try:
+        mirror.schedule(pid)
+    except Exception:
+        logger.exception(f"page commit {pid} {variant}: the mirror could not "
+                         f"be scheduled")
+    _schedule_published(store, jobs, builds, repo, pid, variant, commit)
+
+
+def _refuse_missing_blobs(repo, changes: list) -> None:
+    """Raise ChangeRefused unless every blob the changes name is a blob of the
+    repository, as one `git cat-file --batch-check` says."""
+    named = pagecommit.blob_ids(changes)
+    if not named:
+        return
+    answers = run_git(repo, "cat-file", "--batch-check",
+                      input="".join(f"{sha}\n" for sha in named)).splitlines()
+    for sha, answer in zip(named, answers):
+        if answer.split(" ")[1:2] != ["blob"]:
+            raise pagecommit.ChangeRefused(422, f"blob {sha} was not uploaded")
+
+
+def _tree_files(repo, tree_ish: str) -> dict:
+    """`{path: (mode, blob sha)}` of every file under `tree_ish`."""
+    files = {}
+    for entry in run_git(repo, "ls-tree", "-r", "-z", tree_ish).split("\0"):
+        head, _, path = entry.partition("\t")
+        if path:
+            mode, _kind, sha = head.split(" ")
+            files[path] = (mode, sha)
+    return files
+
+
+def _stage(repo, staged: dict, directory: str, records: list) -> None:
+    """Put `records` (`pagecommit.index_records`), whose paths are the project
+    directory's, into the index `staged` names. One `update-index -z
+    --index-info`, the NUL keeping a path with a quote or a newline in it as
+    it is."""
+    prefix = f"{directory}/" if directory else ""
+    run_git(repo, "update-index", "-z", "--index-info", env=staged,
+            input="".join(f"{mode} {sha}\t{prefix}{path}\0"
+                          for mode, sha, path in records))
+
+
+def _verify_project_file(repo, pid: str, directory: str, tree: str) -> None:
+    """Raise ChangeRefused unless the project.json of `tree` is still in
+    `directory` and is a JSON object with this project's id."""
+    path = f"{directory}/{PROJECT_FILE}" if directory else PROJECT_FILE
+    must_stay = (f"{PROJECT_FILE} with id {pid} must stay in "
+                 f"{directory or 'the repository root'}")
+    try:
+        document = json.loads(run_git(repo, "cat-file", "-p",
+                                      f"{tree}:{path}"))
+    except subprocess.CalledProcessError as error:
+        raise pagecommit.ChangeRefused(422, must_stay) from error
+    except ValueError as error:
+        raise pagecommit.ChangeRefused(
+            422, f"{PROJECT_FILE} is not valid JSON: {error}") from error
+    if not isinstance(document, dict) or document.get("id") != pid:
+        raise pagecommit.ChangeRefused(422, must_stay)
 
 
 def _same_tree_build(store: Store, repo, pid: str, variant: str, tip: str,

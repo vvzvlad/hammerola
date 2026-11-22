@@ -326,12 +326,14 @@ def end_of_request(store: Store, request: GitRequest, mirror) -> None:
     The git client returns when the connection closes, so whatever is done here
     is done by the time `git push` returns: after a push, the project's `latest`
     and `builds.json` follow the branch git has just written, and the index
-    follows them (`Store.recompute`). A push is one of the two requests that
-    can move a ref; the other is a name changed on the page (`POST
-    /api/v1/projects/<pid>/names`, `prereceive.commit_name`), which
-    recomputes the same way. Before that, each variant whose branch the push
-    deleted is removed (`Store.remove_variant`): here, once git is done, and
-    not in the pre-receive hook's answer, which comes before git moves the ref.
+    follows them (`Store.recompute`). A push is one of the three ways a ref
+    moves; the others are the hub's commits from the page — a name changed
+    (`POST /api/v1/projects/<pid>/names`, `prereceive.commit_name`) and files
+    changed (`POST /api/v1/source/<pid>/commit`, `prereceive.commit_changes`,
+    the branch moved by the build worker) — which recompute the same way.
+    Before that, each variant whose branch the push deleted is removed
+    (`Store.remove_variant`): here, once git is done, and not in the
+    pre-receive hook's answer, which comes before git moves the ref.
     Last, the project's copy is queued (`Mirror.schedule`) when the hook said a
     branch moved, with the variants removed: only those, since a branch git did
     not delete is still there and deleting it in the copy would erase it. The

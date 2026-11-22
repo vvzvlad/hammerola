@@ -176,7 +176,7 @@ def build(args) -> int:
     -> git push's exit code.
 
     First the branch is fast-forwarded to the hub's (`_follow_hub`), which
-    has commits of its own when a name was changed on the page. The draft is
+    has commits of its own when a change was made on the page. The draft is
     then a commit made through a temporary index, so the author's index and
     HEAD are not touched by it; files git ignores are not in it, as they are
     not in a version. The hook builds it into the dev slot of the branch's
@@ -217,8 +217,9 @@ def build(args) -> int:
 def _follow_hub(root, remote: str, branch: str) -> None:
     """Fast-forward the branch checked out to the hub's, saying so in a line.
 
-    The hub's branch moves on its own when a name is changed on the page: the
-    hub commits it into project.json (src/prereceive.py `commit_name`).
+    The hub's branch moves on its own when a change is made on the page: the
+    hub commits a name into project.json (src/prereceive.py `commit_name`) and
+    files from the Files window (`commit_changes`).
     Nothing happens when the hub has no such branch or this one has its tip
     already. A branch with commits of its own, or edits the fast-forward would
     overwrite, is left alone and the build stops: its draft would carry a
@@ -230,8 +231,8 @@ def _follow_hub(root, remote: str, branch: str) -> None:
             root, "merge-base", "--is-ancestor", published, "HEAD",
             check=False).returncode == 0:
         return
-    behind = (f"the hub's {branch} has commits this branch lacks (names "
-              f"changed on the page)")
+    behind = (f"the hub's {branch} has commits this branch lacks (changes "
+              f"made on the page)")
     if git(root, "merge-base", "--is-ancestor", "HEAD", published,
            check=False).returncode != 0:
         # `--no-rebase`: a bare `git pull` refuses diverged branches.
@@ -250,7 +251,7 @@ def _follow_hub(root, remote: str, branch: str) -> None:
             f"  Commit or stash them, then build again.")
     print(f"fast-forwarded {branch} to the hub's: "
           f"{git(root, 'rev-parse', 'HEAD').stdout.strip()[:12]}, "
-          f"names changed on the page")
+          f"changes made on the page")
 
 
 def _draft_commit(root) -> str:

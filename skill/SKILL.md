@@ -220,11 +220,13 @@ switches between them by the project's title.
 * A change every variant needs (the board, a datasheet, the shared case code)
   goes into each branch: `git merge` or `git cherry-pick`.
 
-**A name changed on the hub's page comes back as a commit.** Renaming the
+**A change made on the hub's page comes back as a commit.** Renaming the
 project, a variant, a view or a document there makes the hub commit the new
 name into `project.json` on that branch: `title`, `variant`, a document's
 `title`, or `"views": {"<view id>": "<name>"}`, which names a view in place of
-the name `model.py` gives it. The hub's branch is then ahead of yours:
+the name `model.py` gives it. The Files window commits files the same way:
+what it writes, deletes or moves, in one commit by `hammerola hub`, once the
+build of that commit has passed. The hub's branch is then ahead of yours:
 `build` fast-forwards it first and stops when the two have diverged, and
 before `git push` run `git pull --no-rebase hammerola-<pid> <branch>`.
 

@@ -48,6 +48,7 @@ is the worker THREADS, which is what `tests/conftest.py` guards before and after
 every test.
 """
 
+from collections.abc import Callable
 from dataclasses import dataclass, replace
 import json
 import math
@@ -253,9 +254,14 @@ class BuildTask:
     `message` is what the commit says it is. The build never reads it; it is
     written into the published document, and a draft has none.
 
-    `variant` is the branch the push was for, `refs/heads/<b>` or
-    `refs/drafts/<b>`: a draft fills that variant's slot, and a revision says
-    in its document which branch it was published from.
+    `variant` is the bare name of the branch the push was for: a draft fills
+    that variant's slot, and a revision says in its document which branch it
+    was published from.
+
+    `after_publish` is called with no arguments by the worker right after the
+    revision is published and before the job is `done`; None for a push and a
+    draft. A `PublishError` it raises ends the job as `failed` with that
+    status and message (a commit made on the page moves its branch there).
     """
 
     job_id: str
@@ -266,6 +272,7 @@ class BuildTask:
     force: bool = False
     message: str | None = None
     variant: str = MAIN_BRANCH
+    after_publish: Callable[[], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -1040,6 +1047,8 @@ class BuildQueue:
                         task.digest, job=task.job_id, message=task.message,
                         variant=task.variant, variant_label=label,
                         forced=task.force, version=version)
+                    if task.after_publish is not None:
+                        task.after_publish()
                 logger.info(
                     f"job {task.job_id}: published {task.pid}/{task.commit} "
                     f"-> {payload['url']}")

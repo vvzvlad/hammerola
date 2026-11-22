@@ -192,8 +192,8 @@ def test_build_fast_forwards_to_a_name_changed_on_the_page_and_stops_on_a_fork(
     assert git(root, "rev-parse", "HEAD").strip() == renamed
     assert json.loads((root / "project.json").read_text())["title"] == \
         "Bracket mk2"
-    assert f"fast-forwarded main to the hub's: {renamed[:12]}" in \
-        capfd.readouterr().out
+    assert (f"fast-forwarded main to the hub's: {renamed[:12]}, "
+            f"changes made on the page") in capfd.readouterr().out
 
     rename("Bracket mk3")
     (root / "notes.md").write_text("mine\n")
