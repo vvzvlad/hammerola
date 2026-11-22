@@ -47,14 +47,17 @@ because the volume would shadow them.
 
 A revision is published by `git push` (src/prereceive.py): the pre-receive hook
 hands the pushed commit to the hub, which builds it in the ordinary queue and
-publishes it under the commit's sha before git writes the ref. The other way
-is a name changed on the page (`POST /api/v1/projects/<pid>/names`,
-`prereceive.commit_name`): the hub's own commit, published as a copy of a
-build of the tip's project tree — the tip's own, or the variant's `latest` —
-(`publish_copy`) before it moves the branch. The repository is the
+publishes it under the commit's sha before git writes the ref. The two
+other ways are the hub's own commits from the page. A name changed on the page
+(`POST /api/v1/projects/<pid>/names`, `prereceive.commit_name`) is published
+as a copy of a build of the tip's project tree — the tip's own, or the
+variant's `latest` — (`publish_copy`) before it moves the branch. Files
+changed on the page (`POST /api/v1/source/<pid>/commit`,
+`prereceive.commit_changes`) are built in the ordinary queue, and the worker
+moves the branch once the revision is published. The repository is the
 canon of history; `latest`, `builds.json`, `variants.json` and `index.json`
-are derived from it and from the build directories, at the end of every push
-and of every rename, and at start (`recompute`, `catch_up`).
+are derived from it and from the build directories, at the end of every push,
+rename and page commit, and at start (`recompute`, `catch_up`).
 
 A variant is a branch, named as the author's local branch is (SPEC §4). The
 default one, `main`, keeps the old places; every other lives in
@@ -835,6 +838,21 @@ class Store:
         return subprocess.run(["git", "cat-file", "blob", sha],
                               env=environment, capture_output=True,
                               check=True).stdout
+
+    def write_blob(self, pid: str, source: Path) -> str:
+        """Put the bytes of the file `source` into the project's repository as
+        a blob, as they are. -> its sha.
+
+        The file is read by git from its path, and `core.bigFileThreshold`
+        makes git stream a file past 1 MB instead of holding it in memory;
+        `--no-filters` keeps the attributes' filters and the line-ending
+        conversion from touching it.
+        """
+        return run_git(
+            self.repo_dir(pid), "hash-object", "-w", "--no-filters",
+            str(source), env={"GIT_CONFIG_COUNT": "1",
+                              "GIT_CONFIG_KEY_0": "core.bigFileThreshold",
+                              "GIT_CONFIG_VALUE_0": "1m"}).strip()
 
     def _variants_on_disk(self, pid: str) -> set:
         """The variants with a directory of their own: a branch's, or a draft's

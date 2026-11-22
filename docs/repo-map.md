@@ -160,7 +160,18 @@
   published as a copy of a build of the tip's project with the name rewritten
   (`Store.publish_copy`; built only when neither the tip's own build nor the
   variant's `latest` holds that project tree),
-  then the branch moved onto it unless a push moved it first
+  then the branch moved onto it unless a push moved it first.
+  Files changed on the page (`POST /api/v1/source/<pid>/commit`, issue #159)
+  are one hub commit too (`commit_changes`), but it is answered with a job and
+  built like a push, and the branch moves from the worker once the build has
+  published (`BuildTask.after_publish`, `_after_page_commit`), which then also
+  schedules `published()` without waiting
+- `src/pagecommit.py` — the half of that commit that needs no git: the checks of
+  the request (paths, repeats, `blob`, `from`, `over`), the conflict and skip
+  decision of a set of changes laid against the files of the build the window
+  showed and of the branch's tip (`decide`), and the records for `git
+  update-index --index-info` with the path collisions refused before git can
+  swallow them (`index_records`)
 - `hammerola/` — the OTHER side of the wire: the `hammerola` command an author runs
   in a model's directory (issue #26). A version is published by git itself
   (`git push hammerola-<pid> <branch>`, a branch being a variant); `connect`

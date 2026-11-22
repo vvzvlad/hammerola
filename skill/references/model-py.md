@@ -199,9 +199,10 @@ board of the project, which the hub exports on every build
   `model.py`. The hub calls it once git has accepted a push and moved its
   branches, once for each branch whose `latest` moves — after a build, after a draft's build was taken
   for the commit, after the branch moved onto a commit built on another branch —
-  with the model of the revision that becomes `latest`; never for a draft, a
-  check worker, a name changed on the page or a push that leaves `latest` where
-  it was. `hub.glb(view, parts)` is one view as GLB bytes, as the viewer shows
+  and after files changed on the page were built and moved their branch, with
+  the model of the revision that becomes `latest`; never for a draft, a check
+  worker, a name changed on the page or a push that leaves `latest` where it
+  was. `hub.glb(view, parts)` is one view as GLB bytes, as the viewer shows
   it: `view` is a dict shaped as an entry of `views()`, `parts` a catalogue
   shaped as `parts()` returns. `hub.compress(glb)` returns it Draco-compressed
   and simplified (gltf-transform's `optimize`, with Draco and a simplification

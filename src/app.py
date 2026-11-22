@@ -92,6 +92,14 @@ Routing (SPEC 3, 7.4):
     GET  /api/v1/source/<pid>/v/<variant>/<pointer>
                                               the same, of another
                                               variant's pointer        EDIT_TOKEN
+    POST /api/v1/source/<pid>/blob            the body, one file's bytes,
+                                              into the project's
+                                              repository: its sha      EDIT_TOKEN
+    POST /api/v1/source/<pid>/commit          the changes made to the
+                                              files, as one commit on a
+                                              variant's branch, built in
+                                              the background: 202 + a
+                                              job                      EDIT_TOKEN
 
     POST   /api/v1/projects/<pid>/title       rename the project       EDIT_TOKEN
     POST   /api/v1/projects/<pid>/names       rename the project, a
@@ -194,6 +202,7 @@ import stat
 import subprocess
 import threading
 import time
+import uuid
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, unquote
@@ -214,8 +223,8 @@ from src.jobs import (QUEUE_FULL_ERROR, QUEUE_FULL_RETRY_AFTER_SECONDS,
 from src.mirror import Mirror, parse_credentials
 from src.multipart import MultipartError, parse_multipart
 from src.settings import build_environment
-from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, LATEST_LINK,
-                       MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
+from src.store import (BUILD_META_FILE, COMPARE_FILES, DEV_LINK, JSON_TMP_PREFIX,
+                       LATEST_LINK, MAIN_BRANCH, POINTER_NAMES, PROJECT_BUILDS_FILE, SITE_INDEX_FILE,
                        VARIANT_SEGMENT, VARIANTS_FILE, Store)
 
 # SPEC 7.4. `immutable` tells a browser not to even revalidate on reload, which is
@@ -600,6 +609,14 @@ def _route_project(handler, rest, query, trailing_slash, with_body):
     return handler._error(404, "not found", {"Connection": "close"})
 
 
+def _route_source(handler, rest, query, trailing_slash, with_body):
+    if rest[1] == "blob":
+        return handler._handle_blob(rest[0])
+    if rest[1] == "commit":
+        return handler._handle_commit(rest[0])
+    return handler._error(404, "not found", {"Connection": "close"})
+
+
 # One entry per route, tried in order: a narrow route must stay above a wider
 # one that would also match.
 GET_ROUTES = (
@@ -665,6 +682,7 @@ POST_ROUTES = (
     ((("api", "v1", "comments"), 7), _route_variant_comment),
     ((("api", "v1", "proposals"), None), _route_proposal),
     ((("api", "v1", "projects"), None), _route_project),
+    ((("api", "v1", "source"), 5), _route_source),
     ((("api", "v1", "compare"), None),
      lambda handler, rest, query, trailing_slash, with_body:
          handler._handle_compare(rest)),
@@ -1898,6 +1916,71 @@ class HubHandler(BaseHTTPRequestHandler):
                           CACHE_NONE, {"Content-Disposition": "attachment"},
                           with_body)
 
+    def _handle_blob(self, pid: str):
+        """POST /api/v1/source/<pid>/blob — the body, as one file's bytes, into
+        the project's repository: 200 `{"blob": <sha>}`, which a commit names
+        (`_handle_commit`).
+
+        The token, then the project, then the body, which goes to a file on
+        the volume as it arrives, under the deadline a push's body has, and
+        from there into git (`Store.write_blob`): a file may be big, and
+        nothing here holds it in memory. No ceiling on its size, as a push has
+        none. A blob no commit names stays in the repository, unreachable.
+        """
+        close = {"Connection": "close"}
+        if not self._require_token(close=True):
+            return None
+        store = self.server.store
+        if not (store.valid_pid(pid) and store.repo_dir(pid).is_dir()):
+            return self._error(404, "not found", close)
+        length = self._body_length()
+        if length is None:
+            return None
+        temporary = store.root / f"{JSON_TMP_PREFIX}blob-{uuid.uuid4().hex}"
+        try:
+            with temporary.open("wb") as sink:
+                problem = self._copy_body(length, sink.write)
+            if problem is not None:
+                status, message = problem
+                return self._error(status, message, close)
+            blob = store.write_blob(pid, temporary)
+        except (OSError, subprocess.CalledProcessError):
+            logger.exception(f"blob {pid}: the body could not be stored")
+            return self._error(500, "internal error", close)
+        finally:
+            temporary.unlink(missing_ok=True)
+        return self._json(200, {"blob": blob})
+
+    def _handle_commit(self, pid: str):
+        """POST /api/v1/source/<pid>/commit — the changes the Files window made
+        to the project's files, committed to a variant's branch
+        (`prereceive.commit_changes`): 202 and a job, whose end the page
+        follows at `/api/v1/jobs/<id>`; 200 `already` when the branch has them
+        all; 409 with the conflicting paths; 422 and the reason otherwise.
+
+        The token first, then the body (JSON, a megabyte at most), then the
+        project, then the variant and the changes.
+        """
+        if not self._require_token(close=True):
+            return None
+        body = self._take_body(MAX_HOOK_BODY_BYTES,
+                               too_large="the commit's body is too large")
+        if body is None:
+            return None
+        try:
+            request = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, ValueError):
+            return self._error(422, "body is not valid JSON")
+        if not isinstance(request, dict):
+            return self._error(422, "body must be a JSON object")
+        store = self.server.store
+        if not (store.valid_pid(pid) and store.repo_dir(pid).is_dir()):
+            return self._error(404, "not found")
+        status, answer = prereceive.commit_changes(
+            store, self.server.jobs, self.server.builds, self.server.mirror,
+            pid, request)
+        return self._json(status, answer)
+
     # -- the git server --------------------------------------------
     def _serve_git(self, method: str, rest: list[str], query: str,
                    with_body: bool):
@@ -2298,25 +2381,32 @@ class HubHandler(BaseHTTPRequestHandler):
         """Read exactly `length` bytes into memory. (bytes, problem or None).
 
         For bodies of a few megabytes at most, already bounded by the caller.
+        """
+        chunks = bytearray()
+        problem = self._copy_body(length, chunks.extend)
+        return bytes(chunks), problem
+
+    def _copy_body(self, length: int, take):
+        """Read exactly `length` bytes of the body, handing each piece to
+        `take`. -> None, or a problem `(status, message)`: the deadline
+        passed, or the body ended early.
+
         `read1`, not `read`: `BufferedReader.read(n)` loops until it has all n
         bytes, so the deadline would go unchecked; `read1` returns after one
         syscall.
         """
         deadline = time.monotonic() + BODY_DEADLINE_SECONDS
-        chunks = bytearray()
         remaining = length
         while remaining > 0:
             if time.monotonic() > deadline:
-                return bytes(chunks), (
-                    408,
-                    f"request body did not arrive within "
-                    f"{BODY_DEADLINE_SECONDS}s")
+                return (408, f"request body did not arrive within "
+                             f"{BODY_DEADLINE_SECONDS}s")
             chunk = self.rfile.read1(min(remaining, 256 * 1024))
             if not chunk:
-                return bytes(chunks), (400, "request body ended early")
-            chunks += chunk
+                return 400, "request body ended early"
+            take(chunk)
             remaining -= len(chunk)
-        return bytes(chunks), None
+        return None
 
 def create_server(settings, *, build_runner=None, compare_runner=None,
                   inspect_runner=None, published_runner=None,
