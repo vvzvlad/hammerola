@@ -15,13 +15,10 @@ import React from 'react';
 
 import { brandName } from './brand.js';
 import { COMMENT_ICON, commentsButton } from './comments.jsx';
-import { baseName, fileRows, filesId, sizeText, sourceFileUrl, sourceUrl } from './filesview.js';
 import { headMenu, headRow } from './headmenu.jsx';
+import { PAGE, isPointerPage, loadVariants, pageVariant, projectUrl } from './hub.js';
 import {
-  HUB_UNREACHABLE, PAGE, askHub, hubBody, hubTrouble, isPointerPage, loadVariants, pageVariant, projectUrl,
-} from './hub.js';
-import {
-  ACCENT_BTN, ELLIPSIS, FILL, HEADER_BAR, HEADER_RULE, ON_ACCENT, RELATIVE, TITLE, WORDMARK, btn, popover, tab,
+  ACCENT_BTN, ELLIPSIS, HEADER_BAR, HEADER_RULE, ON_ACCENT, RELATIVE, TITLE, WORDMARK, btn, popover, tab,
 } from './panelstyle.js';
 import { Pencil, RENAME_HOST } from './rename.jsx';
 import { revisionView } from './revisionview.js';
@@ -46,24 +43,18 @@ const SUN_ICON = (
 );
 
 /** The header's menus, all shut. */
-export const SHUT = { variantsOpen: false, headMenu: false, tokenPop: false, filesOpen: false, revOpen: false };
-
-/** What the Files card says when the list did not come. */
-const FILES_FAILED = 'Could not load the files';
-/** And what it says when a file did not come. */
-const FILE_FAILED = 'Could not download the file';
+export const SHUT = { variantsOpen: false, headMenu: false, tokenPop: false, revOpen: false };
 
 /**
  * The header's values. `s` is its state (`Header`), `p` what it is drawn from:
  * `meta`, `token`, `theme`, `tabStrip` and `builds` (BuildPage's) and `parts`
  * (the page's `headerParts()`).
  * `act` holds its doors: `stop`, `setState`, `shutPage`, `onToken(token)`,
- * `onTheme(theme)`, `onRename(subject)`, `closeTab(pid)`, `loadFiles()`,
- * `downloadFile(path)`.
+ * `onTheme(theme)`, `onRename(subject)`, `closeTab(pid)`, `onFiles()`.
  */
 export function headerView(s, p, act) {
   const { meta, token, theme, tabStrip, parts } = p;
-  const { stop, setState, shutPage, onToken, onTheme, onRename, closeTab, loadFiles, downloadFile } = act;
+  const { stop, setState, shutPage, onToken, onTheme, onRename, closeTab, onFiles } = act;
   const viewer = !token;
   const narrow = !!s.narrow;
   const variant = pageVariant(PAGE, meta);
@@ -120,15 +111,6 @@ export function headerView(s, p, act) {
       rev.share(id);
     }),
   });
-
-  // The files of the revision on screen (filesview.js), as `loadFiles` holds
-  // them for the build on screen (`filesId`): rows of a tree, its directories
-  // opened by the reader (`filesDirs`), and a line instead while there is no
-  // list to show.
-  const held = s.files && s.files.id === filesId(PAGE, meta) ? s.files : null;
-  const list = held && held.list;
-  const filesSaid = !held || held.loading ? 'Loading…'
-    : held.said || (list.length ? '' : 'No files in this revision.');
 
   const comments = parts.comments || null;
   const openTabs = s.tabs || [];
@@ -198,9 +180,9 @@ export function headerView(s, p, act) {
     compareBtnStyle: `padding:7px 14px;border-radius:6px;font:600 12px ${SANS};cursor:pointer;`
       + (cmp.length === 2 ? ON_ACCENT : 'background:var(--sunken-bg);color:var(--text-faint);pointer-events:none'),
     startCompare: rev.startCompare && stop(() => rev.startCompare()),
-    // The wrappers Files and the token hang their cards off. Wide, each
-    // holds its button and its card; narrow, the buttons are rows of the menu
-    // and the cards sheets along the bottom edge (`popover`).
+    // The wrapper the token hangs its card off. Wide, it holds the button and
+    // the card; narrow, the button is a row of the menu and the card a sheet
+    // along the bottom edge (`popover`).
     headWrapStyle: narrow ? 'display:contents' : RELATIVE,
     tokenRowStyle: headRow(!viewer),
     headRowStyle: headRow(false),
@@ -209,35 +191,15 @@ export function headerView(s, p, act) {
     statusText: status.text,
 
     // -- Files: the code of the revision, which the hub hands to the token
-    // alone (SPEC 7.8), so without one there is no button. The list is asked
-    // for as the card opens (`loadFiles`). A directory's row opens and shuts
-    // it; a file's downloads it.
+    // alone (SPEC 7.8), so without one there is no button. It opens the Files
+    // window over the page (files.jsx), which BuildPage draws (`onFiles`).
     filesShown: !viewer,
-    filesToggle: stop(() => {
-      const opening = !s.filesOpen;
-      setState({ ...SHUT, filesOpen: opening });
+    openFiles: stop(() => {
+      setState(SHUT);
       shutPage();
-      if (opening) loadFiles();
+      onFiles();
     }),
-    filesBtnStyle: btn(s.filesOpen) + ';border:1px solid var(--line);background:var(--card-bg)',
-    filesMenuStyle: popover({
-      narrow, anchor: 'right:0;top:40px', width: '320px', radius: '9px',
-      tail: 'padding:6px 0;max-height:60vh;overflow:auto;', z: 40, open: s.filesOpen }),
-    filesSaid,
-    filesSaidStyle: `padding:10px 14px;font:400 11.5px ${SANS};color:var(--text-muted)`,
-    fileRows: (filesSaid ? [] : fileRows(list, s.filesDirs || {})).map((row) => ({
-      key: row.path,
-      path: row.path,
-      name: row.name,
-      // The caret the parts tree draws (HammerolaViewer.jsx, `caretPath`).
-      caretPath: row.dir ? (row.open ? 'M4 6l4 4 4-4' : 'M6 4l4 4-4 4') : '',
-      size: row.dir ? '' : sizeText(row.size),
-      style: `display:flex;align-items:center;gap:6px;padding:5px 14px 5px ${14 + row.depth * 14}px;`
-        + `font:400 12px ${SANS};color:var(--text);cursor:pointer`,
-      onClick: row.dir
-        ? () => setState({ filesDirs: { ...s.filesDirs, [row.path]: !row.open } })
-        : () => downloadFile(row.path),
-    })),
+    filesBtnStyle: btn(false) + ';border:1px solid var(--line);background:var(--card-bg)',
 
     // -- the token: the whole customer/viewer split, in one control. Save and
     // Remove write it here; BuildPage hands it down to the header and the page.
@@ -264,7 +226,7 @@ export function headerView(s, p, act) {
     // one the revision's button is a label and Files is not drawn.
     tokenClear: stop(() => {
       clearToken();
-      setState({ tokenPop: false, tokenDraft: '', revOpen: false, filesOpen: false });
+      setState({ tokenPop: false, tokenDraft: '', revOpen: false });
       onToken(null);
       toast('Token removed — back to viewing');
     }),
@@ -328,7 +290,8 @@ export function headerView(s, p, act) {
  * The header. Props: `meta`, `token`, `theme`, `tabStrip` and `builds` (BuildPage's);
  * `parts()`, the page's `headerParts()`; `onToken(token)` and `onTheme(theme)`,
  * the token and the theme taken; `onRename(subject)`, the rename window opened;
- * `shutPage()`, the page's menus shut. Nothing is drawn before a build.
+ * `onFiles()`, the Files window opened; `shutPage()`, the page's menus shut.
+ * Nothing is drawn before a build.
  */
 export default class Header extends React.Component {
   constructor(props) {
@@ -337,16 +300,12 @@ export default class Header extends React.Component {
       ...SHUT,
       // `variants.json` once it comes (`loadVariants` in hub.js), the token's
       // draft, the strip of projects (seeded on the build's arrival, `arrive`)
-      // and whether the window is narrow, read before the first paint; the
-      // Files card's list (`loadFiles`) and the directories opened in it;
-      // whether the revision picker shows its tags alone, for this page only.
-      variants: null, tokenDraft: '', tabs: [], files: null, filesDirs: {},
+      // and whether the window is narrow, read before the first paint; whether
+      // the revision picker shows its tags alone, for this page only.
+      variants: null, tokenDraft: '', tabs: [],
       tagsOnly: false,
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
     };
-    // The build on screen whose files an open card shows, asked for again when
-    // another takes its place (`componentDidUpdate`).
-    this.filesId = filesId(PAGE, props.meta);
     this.mq = null;
     this.gone = false;
     // Widening puts the menu down: the wide header draws none, and a flag left
@@ -379,11 +338,6 @@ export default class Header extends React.Component {
 
   componentDidUpdate(prev) {
     if (!prev.meta && this.props.meta) this.arrive();
-    const shown = filesId(PAGE, this.props.meta);
-    if (shown !== this.filesId) {
-      this.filesId = shown;
-      if (this.state.filesOpen) this.loadFiles();
-    }
   }
 
   componentWillUnmount() {
@@ -415,52 +369,6 @@ export default class Header extends React.Component {
     return open;
   }
 
-  /** The list of the Files card, `{id, list}`, asked of the hub for the
-   *  build on screen (`filesId`) unless it is held or on its way; a failure
-   *  is `{id, said}`, and the next opening asks again. An answer for a build
-   *  the page no longer shows is dropped. */
-  async loadFiles() {
-    const id = filesId(PAGE, this.props.meta);
-    const held = this.state.files;
-    if (held && held.id === id && (held.list || held.loading)) return;
-    this.setState({ files: { id, loading: true } });
-    const { response, error } = await askHub(sourceUrl(PAGE, this.props.meta), this.props.token);
-    let files = { id, said: error ? HUB_UNREACHABLE : hubTrouble(response, 200, FILES_FAILED) };
-    if (!files.said) {
-      const { body, error: unread } = await hubBody(response);
-      files = unread ? { id, said: FILES_FAILED } : { id, list: (body && body.files) || [] };
-    }
-    if (!this.gone && filesId(PAGE, this.props.meta) === id) this.setState({ files });
-  }
-
-  /** One file of the Files card, fetched with the token and handed to the
-   *  browser under its own name; a refusal, or a body cut off on the way, is a
-   *  toast. */
-  async downloadFile(path) {
-    const { response, error } = await askHub(
-      sourceFileUrl(sourceUrl(PAGE, this.props.meta), path), this.props.token);
-    const said = error ? HUB_UNREACHABLE : hubTrouble(response, 200, FILE_FAILED);
-    if (said) {
-      this.props.parts().toast(said);
-      return;
-    }
-    let blob;
-    try {
-      blob = await response.blob();
-    } catch {
-      this.props.parts().toast(FILE_FAILED);
-      return;
-    }
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = baseName(path);
-    document.body.appendChild(a);
-    a.click();
-    a.remove();
-    setTimeout(() => URL.revokeObjectURL(url), 10000);
-  }
-
   /** The values the header is drawn from (`headerView`). */
   view() {
     const { meta, token, theme, tabStrip, builds } = this.props;
@@ -474,8 +382,7 @@ export default class Header extends React.Component {
       onTheme: (value) => this.props.onTheme(value),
       onRename: (subject) => this.props.onRename(subject),
       closeTab: (pid) => this.closeTab(pid),
-      loadFiles: () => this.loadFiles(),
-      downloadFile: (path) => this.downloadFile(path),
+      onFiles: () => this.props.onFiles(),
     });
   }
 
@@ -501,38 +408,18 @@ export default class Header extends React.Component {
           <VariantSwitch choices={v.variantChoices} open={v.variantsOpen}
                          onToggle={v.variantsToggle} narrow={v.narrowMenus} onRename={v.variantRename} />
 
-          {/* The revision, Files and the token: each a button with its
-              card on a wide window; on a narrow one the button is a row of the
-              menu below and the card a sheet. */}
+          {/* The revision and the token: each a button with its card on a
+              wide window; on a narrow one the button is a row of the menu below
+              and the card a sheet. Files opens a window of its own. */}
           {revisionPicker(v)}
 
           {v.showStatus && <div style={css(v.statusChipStyle)}>{v.statusText}</div>}
 
           <div style={css(v.controlsStyle)}>
-            {v.filesShown && (
-              <div style={css(v.headWrapStyle)}>
-                {!v.headFolded && (
-                  <div onClick={v.filesToggle} style={css(v.filesBtnStyle)}>
-                    {FOLDER_ICON}
-                    Files
-                  </div>
-                )}
-                {/* A click in the card stays in it, so the reader opens one
-                    directory after another and takes file after file. */}
-                <div onClick={(e) => e.stopPropagation()} style={css(v.filesMenuStyle)}>
-                  {v.filesSaid && <div style={css(v.filesSaidStyle)}>{v.filesSaid}</div>}
-                  {v.fileRows.map((row) => (
-                    <div key={row.key} onClick={row.onClick} title={row.path} style={css(row.style)}>
-                      <span style={css('width:12px;height:12px;flex:none;display:flex;color:var(--text-soft)')}>
-                        {row.caretPath && (
-                          <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.6"><path d={row.caretPath} /></svg>
-                        )}
-                      </span>
-                      <span style={css(`${FILL};min-width:0;${ELLIPSIS}`)}>{row.name}</span>
-                      {row.size && <span style={css(`flex:none;font:400 10.5px ${MONO};color:var(--text-faint)`)}>{row.size}</span>}
-                    </div>
-                  ))}
-                </div>
+            {v.filesShown && !v.headFolded && (
+              <div onClick={v.openFiles} style={css(v.filesBtnStyle)}>
+                {FOLDER_ICON}
+                Files
               </div>
             )}
 
@@ -586,7 +473,7 @@ export default class Header extends React.Component {
             <>
               {revisionRow(v)}
               {v.filesShown && (
-                <div onClick={v.filesToggle} style={css(v.headRowStyle)}>
+                <div onClick={v.openFiles} style={css(v.headRowStyle)}>
                   {FOLDER_ICON}
                   Files
                 </div>

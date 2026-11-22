@@ -1,7 +1,7 @@
 // The JS test runner, kept in a file of its own.
 //
 // Not a `test:` block in vite.config.mjs: that file is the build contract (the
-// one output the Makefile, Dockerfile and publish gate copy by name). Vitest
+// outputs the Makefile, Dockerfile and publish gate copy by name). Vitest
 // picks this file up ahead of vite.config.mjs, and `vite build` never reads
 // this one. The build's entry is `src/main.jsx` and nothing in `src/` imports
 // `tests/`, so the runner stays out of the bundle.

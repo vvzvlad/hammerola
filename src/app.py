@@ -265,8 +265,13 @@ FAVICON_ASSET = "favicon.svg"
 # `style-src 'unsafe-inline'`: the viewer writes `style="flex: 1"` attributes at
 # runtime with model-dependent values (no hash or nonce possible), and without
 # it the tab bar collapses. Inline styles cannot execute code.
+#
+# `frame-src 'self' blob:`: the Files window (ui/src/files.jsx) shows a PDF of
+# the revision in a frame from a `blob:` address it makes of the fetched bytes;
+# `'self'` keeps the documents' frames, which come from this origin.
 CSP_HTML = ("default-src 'self'; img-src 'self' data: blob:; "
-            "script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'")
+            "script-src 'self' 'wasm-unsafe-eval'; style-src 'self' 'unsafe-inline'; "
+            "frame-src 'self' blob:")
 
 # Extra headers on the three HTML pages: they are rendered in the theme the
 # cookie asks for (`render.cookie_theme`), so one URL has two documents. The

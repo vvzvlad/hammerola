@@ -273,7 +273,6 @@ describe('the menu itself', () => {
     expect(c.state.viewsOpen).toBe(true)
     expect(header.state.tokenPop).toBe(false)
     expect(header.state.revOpen).toBe(false)
-    expect(header.state.filesOpen).toBe(false)
   })
 })
 

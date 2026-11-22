@@ -7,8 +7,8 @@ that are invisible at runtime until they are expensive:
 
   * THE LIBRARY IS NOT IN THE BUNDLE. It is vendored (3.5 MB, served by the hub)
     and reached through a runtime `import()` of a URL. A static import would
-    still work while tripling a bundle whose contract is "one output file,
-    copied by name in three other places".
+    still work while tripling a bundle whose contract is "these output files,
+    each copied by name in three other places".
   * THE URL IS ONE THE HUB WILL SERVE. `_serve_asset()` answers
     `/_v/<one path component>` and `_safe_name()` rejects a slash.
   * THE NAMES ON THE WIRE COME FROM ONE FILE. A misspelt event name is silence.

@@ -57,7 +57,7 @@ describe('the build page', () => {
       const { b, header } = drawn(meta)
       expect([header.props.meta, header.props.token, header.props.theme, header.props.builds])
         .toEqual([meta, 'sekrit', 'dark', LIST])
-      for (const door of ['parts', 'shutPage', 'onToken', 'onTheme', 'onRename']) {
+      for (const door of ['parts', 'shutPage', 'onToken', 'onTheme', 'onRename', 'onFiles']) {
         expect(header.props[door], door).toBe(b[door])
       }
     }

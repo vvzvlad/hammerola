@@ -768,8 +768,8 @@ describe('the widget', () => {
     // Two different jobs on one element. The press must not reach the canvas
     // (belt and braces — see the comment in the module about why it is not what
     // makes it safe today), while the click must reach the app's root: that one
-    // `onClick` is what closes the tree-row menu, the revision dropdown, the
-    // Files card and the token popup. Stopping it turned the model behind a
+    // `onClick` is what closes the tree-row menu, the revision dropdown and the
+    // token popup. Stopping it turned the model behind a
     // menu that stayed up.
     const vp = fakeViewport([...ISO])
     vp.viewer.presetCamera = vi.fn()

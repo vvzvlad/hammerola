@@ -48,13 +48,13 @@ const POP_SHADOW = '0 10px 34px var(--shadow)';
 export const POP_SHADOW_HIGH = '0 12px 40px var(--shadow)';
 
 /**
- * THE FIVE POPOVERS OF THE BUILD PAGE, BUILT TO ONE RECIPE: the revision picker,
- * the Files card, the token control, the section control and the note box —
- * each a card hung off its own control, each becoming
- * `popSheet` when narrow, each shown by its own flag. Five spellings of one
- * shape, which is five places for the card to drift apart.
+ * THE POPOVERS OF THE BUILD PAGE, BUILT TO ONE RECIPE: the revision picker,
+ * the token control, the section control, the note box and the rest — each a
+ * card hung off its own control, each becoming `popSheet` when narrow, each
+ * shown by its own flag. A spelling per call site of one shape would be as many
+ * places for the card to drift apart.
  * `tail` is what a call site appends after the shadow, before the layer and
- * the flag; one of the five has any: the Files card's padding and its scroll.
+ * the flag: the header's menu and the variants' card put their padding there.
  */
 export function popover({
   narrow, anchor, width, radius, z, open, pad = '', shadow = POP_SHADOW, tail = '',

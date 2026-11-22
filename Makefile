@@ -24,7 +24,7 @@ PYTEST := $(PY) -m pytest
 # A new output needs a name here, a COPY line in the Dockerfile and a row in
 # REQUIRED_PATHS.
 UI_OUT   := static/_v
-UI_FILES := hammerola.js
+UI_FILES := hammerola.js hammerola-editor.js
 
 # The viewer library's outputs, published into the same directory by the same rules.
 # three is outside the viewer bundle (`external: three`), so the page shares one
