@@ -403,7 +403,7 @@
 - `brand/` — the mark as the designer drew it, and the SOURCE the two inline
   copies of it are transcribed from: `Mark` in `ui/src/style.jsx` and the
   `<svg>` in `templates/pointer.html`, neither of which can import a file (one
-  would make the bundle emit a second output, the other is on the page whose
+  would make the bundle emit another output, the other is on the page whose
   whole job is to leave quickly). `ui/tests/chrome.test.js` compares all three
   element for element, so these are derived copies rather than similar ones —
   every attribute as the union of both sides, the `<svg>` ROOT included, with a
@@ -533,17 +533,31 @@
   build on screen (the model's page reports its load and a swap in place,
   `onBuild`), the token, the theme, whether the header draws its tab strip
   (`tabStrip`, flipped by either page's Settings card through
-  `onTabStrip`), the variant's `builds.json` read under the token, and the
-  rename window; the token, the theme, the strip's switch and the list go down
+  `onTabStrip`), the variant's `builds.json` read under the token, the
+  rename window and the Files window (`files.jsx`); the token, the theme, the strip's switch and the list go down
   to both as props
 - `ui/src/Header.jsx` — the header over both pages: the mark, the title, the
-  variants, the revision picker, the build's status, Files (the revision's
-  files in git, `filesview.js`), the token's Save and Remove, Comments and the
+  variants, the revision picker, the build's status, Files (opens the Files
+  window, `onFiles`), the token's Save and Remove, Comments and the
   theme, folded into one menu on a narrow window, and under it the tab strip of
   the projects this browser has been in (`rememberTab` on the build's
   arrival), drawn only while Settings' "Project tabs" is on. What it says of
   the page it reads from the page's `headerParts()`; the two shut each other's
   menus (`shutHeader`, `shutPage`). `headerView` is its values, pure
+- `ui/src/files.jsx` — the Files window BuildPage draws over either page (issue
+  #160): the files of the revision on screen as a tree, the chosen one in the
+  pane beside it — text in the editor, an image, a PDF in a frame with Open
+  and Download, anything else or anything over `LARGE_FILE` as its size and
+  Download; on a narrow window the pane replaces the tree. `filesview.js` is
+  its pure half: the one address the list and every file's bytes come from
+  (`sourceUrl`, `sourceFileUrl`), the rows, a file's kind, decoding and
+  language
+- `ui/src/editor/` — CodeMirror 6 for the Files window, built as the separate
+  chunk `static/_v/hammerola-editor.js` that `files.jsx` imports the first
+  time it opens a text file: `mount(element, {text, language, readOnly,
+  onChange, theme})` → `{getText, destroy}`, highlighted through
+  `classHighlighter` with the `--code-*` colours of `tokens.css`. It imports
+  only `@codemirror/*`, `@lezer/*` and its own folder (`tests/test_ui_editor.py`)
 - `ui/src/variants.jsx` — the switcher of the project's variants beside the
   title, in the header over both pages (issue #129): `variantChoices` turns `variants.json`
   (`loadVariants` in `ui/src/hub.js`, no token) into rows that link to each

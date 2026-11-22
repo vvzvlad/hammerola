@@ -1681,9 +1681,9 @@ rename. Остаток от записи, убитой на полпути, жи
 **Заголовки безопасности.** На каждом ответе — `X-Content-Type-Options: nosniff`; на
 HTML-страницах самого хаба (из `templates/`) — `Content-Security-Policy: default-src
 'self'; img-src 'self' data: blob:; script-src 'self' 'wasm-unsafe-eval'; style-src
-'self' 'unsafe-inline'` (`CSP_HTML` в `src/app.py`). Отсюда требование: ни одного
-инлайн-скрипта в шаблонах, весь JS страниц — файлами в `/_v/`. HTML-файл из сборки
-идёт без этой политики (ниже).
+'self' 'unsafe-inline'; frame-src 'self' blob:` (`CSP_HTML` в `src/app.py`). Отсюда
+требование: ни одного инлайн-скрипта в шаблонах, весь JS страниц — файлами в `/_v/`.
+HTML-файл из сборки идёт без этой политики (ниже).
 
 `img-src ... data:` обязателен: `three-cad-viewer.css` держит весь тулбар в 74
 свойствах `--tcv-icon-*: url("data:image/svg+xml,...")` (§2.2), а `'self'` схему
@@ -1703,6 +1703,15 @@ WebAssembly: `eval` и `new Function` обычного JS, инлайн-скри
 создают только скрипты самой страницы, то есть файлы из `/_v/`; хаб
 однопользовательский, и защиты от враждебного автора этих файлов в политике нет
 (§4).
+
+`frame-src 'self' blob:` — ради окна Files (`ui/src/files.jsx`): PDF ревизии оно
+показывает во фрейме из `blob:`-адреса, который само делает из скачанных байтов,
+пересоздав их с типом `application/pdf` (маршрут отдаёт файл как
+`application/octet-stream`). Без `frame-src` фреймы подчиняются `default-src
+'self'`, а `'self'` схему `blob:` не покрывает — браузер отказывает фрейму. `'self'`
+в списке остаётся ради фреймов документов, которые идут с того же адреса. Документ
+из `blob:` наследует политику страницы; встроенный просмотрщик PDF Chromium под ней
+показывает файл и во фрейме, и в отдельной вкладке (кнопка Open). Safari не проверен.
 
 **Content-Type файлов сборки — по белому списку** (`BUILD_CONTENT_TYPES` в
 `src/app.py`). `.json` → `application/json`, `.stl`/`.step`/`.stp`/`.3mf` → свои
