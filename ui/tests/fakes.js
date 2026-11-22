@@ -425,7 +425,7 @@ export function fakeViewer({
     clipping: {
       clipPlanes: planes,
       setVisible: vi.fn(),
-      // `Clipping` starts this as `[]` (viewer/src/scene/clipping.ts:357) and
+      // `Clipping` starts this as `[]` (viewer/src/scene/clipping.ts:478) and
       // `_createStencils` fills it, so an empty array is what a scene with no
       // solids in it looks like — not a missing field.
       _capUnits: capUnits,
@@ -626,10 +626,10 @@ export function fakeGroup(position = [0, 0, 0]) {
 // -- the section caps, for the hatch -------------------------------------------
 //
 // Transcribed from the library's own source in viewer/, not invented: the
-// `PlaneMesh` constructor (viewer/src/scene/clipping.ts:244-263) and
-// `Clipping._createStencils` (viewer/src/scene/clipping.ts:478-563), which is
+// `PlaneMesh` constructor (viewer/src/scene/clipping.ts:365-384) and
+// `Clipping._createStencils` (viewer/src/scene/clipping.ts:599-684), which is
 // what builds `Clipping._capUnits` — one entry PER SOLID,
-// `{ solid, stencilGroups, capMeshes, radiusPx }`, with `capMeshes` pushed
+// `{ solid, stencilGroups, capMeshes, radiusPx, closed }`, with `capMeshes` pushed
 // plane-major so they are ordered by plane within the unit. The solids' tree
 // paths arrive with `/` already replaced by `|`, as the library spells it
 // (`group.name = path.replaceAll("/", this.delim)`, delim `|`).
@@ -652,7 +652,7 @@ export function fakeMatrix({ scale = [1, 1, 1], position = [0, 0, 0] } = {}) {
  *  material carries, and the `color` the cap is filled with — which
  *  `createStencilPlaneMaterial` is handed and `PlaneMesh`'s constructor then
  *  `set`s a second time from its own `color` argument
- *  (viewer/src/scene/clipping.ts:255). */
+ *  (viewer/src/scene/clipping.ts:376). */
 export function fakeCapMaterial(color = PLANE_COLORS[0]) {
   return {
     defines: { STANDARD: '' },
@@ -685,7 +685,7 @@ export function fakeCap(index, size, normal = [0, 0, 1], color = PLANE_COLORS[in
     size,
     center: [0, 0, 0],
     // `Object3D.visible`, which is what `Clipping.cull`
-    // (viewer/src/scene/clipping.ts:694) writes to take a cap off the screen —
+    // (viewer/src/scene/clipping.ts:815) writes to take a cap off the screen —
     // so a cap that has not been culled starts true, the way every Object3D
     // does.
     visible: true,
@@ -738,6 +738,7 @@ export function fakeCapUnits(solids, {
         : fakeCap(i, size, n, colors ? colors[at] : PLANE_COLORS[i])))
       .filter(Boolean),
     radiusPx: 0,
+    closed: null,
   }))
 }
 

@@ -11876,6 +11876,120 @@ const _cullCenter = new THREE.Vector3();
 const _cullEdge = new THREE.Vector3();
 const _cullRight = new THREE.Vector3();
 const _cullBox = new THREE.Box3();
+/**
+ * HAMMEROLA'S PATCH: whether a solid's cut can be capped. The stencil passes
+ * count back faces against front faces along each pixel, which reads "inside"
+ * only for a closed surface. On an open one -- a board's copper, mask and
+ * silkscreen, a decal -- the count is off wherever the sheet lies behind the
+ * plane, and the cap paints the whole sheet onto the plane, hatch and all.
+ *
+ * A leaf with edges is a B-rep solid from the tessellator, closed by
+ * construction, and is not tested: its tessellation can leave a few edges
+ * unshared. A leaf without edges is a mesh -- hammerola writes a mesh's edges
+ * empty (`_mesh_leaf`, src/cadbuild/views.py) -- and is closed when
+ * {@link meshClosed} says so.
+ */
+function closedSurface(solid) {
+    if (solid.edges !== null)
+        return true;
+    const geometry = solid.shapeGeometry;
+    const index = geometry ? geometry.index : null;
+    if (!geometry || !index)
+        return true;
+    const position = geometry.getAttribute("position");
+    return meshClosed(position.array, index.array);
+}
+/**
+ * HAMMEROLA'S PATCH: whether every edge of a triangle mesh borders two
+ * triangles or more once coincident vertices are welded, i.e. the mesh has no
+ * boundary. Welded by exact position: a mesh leaf may give each face vertices
+ * of its own (a KiCad model's do), and the copies of a shared corner are the
+ * same numbers.
+ *
+ * A T-junction -- a corner of one face lying on an edge of the next -- counts
+ * as a boundary, so a mesh tessellated that way is open here even where it
+ * encloses a volume, and its cut is drawn uncapped.
+ *
+ * Both tables are open addressing over typed arrays at most half full: a
+ * board's copper is tens of thousands of triangles, and a Map keyed by strings
+ * spent 200 ms on one board's meshes.
+ */
+function meshClosed(positions, index) {
+    // `+ 0` makes -0 and 0 one position; the hash below reads the bits.
+    const coords = Float32Array.from(positions, (value) => value + 0);
+    const bits = new Uint32Array(coords.buffer);
+    const vertexCount = coords.length / 3;
+    let vertexSize = 2;
+    while (vertexSize < vertexCount * 2)
+        vertexSize <<= 1;
+    const vertexSlots = new Int32Array(vertexSize).fill(-1);
+    const welded = new Int32Array(vertexCount);
+    for (let v = 0; v < vertexCount; v++) {
+        const x = bits[3 * v];
+        const y = bits[3 * v + 1];
+        const z = bits[3 * v + 2];
+        // The high bits folded in before the mask: a round coordinate (1, 0.5,
+        // 0.25) has its low mantissa bits all zero, and without the fold such
+        // corners crowd into a few slots.
+        const hash = Math.imul(x ^ (x >>> 16), 0x9e3779b1) ^
+            Math.imul(y ^ (y >>> 16), 0x85ebca77) ^
+            Math.imul(z ^ (z >>> 16), 0xc2b2ae3d);
+        let slot = (hash ^ (hash >>> 15)) & (vertexSize - 1);
+        for (;;) {
+            const w = vertexSlots[slot];
+            if (w < 0) {
+                vertexSlots[slot] = v;
+                welded[v] = v;
+                break;
+            }
+            if (bits[3 * w] === x && bits[3 * w + 1] === y && bits[3 * w + 2] === z) {
+                welded[v] = w;
+                break;
+            }
+            slot = (slot + 1) & (vertexSize - 1);
+        }
+    }
+    // Each undirected edge by its two welded ends; `uses` stops counting at 2.
+    let edgeSize = 2;
+    while (edgeSize < index.length * 2)
+        edgeSize <<= 1;
+    const low = new Int32Array(edgeSize).fill(-1);
+    const high = new Int32Array(edgeSize);
+    const uses = new Uint8Array(edgeSize);
+    for (let t = 0; t + 2 < index.length; t += 3) {
+        for (let k = 0; k < 3; k++) {
+            let a = welded[index[t + k]];
+            let b = welded[index[t + ((k + 1) % 3)]];
+            // Two corners welded into one: the triangle is degenerate there.
+            if (a === b)
+                continue;
+            if (a > b) {
+                const swap = a;
+                a = b;
+                b = swap;
+            }
+            let slot = (Math.imul(a, 0x9e3779b1) ^ Math.imul(b, 0x85ebca77)) & (edgeSize - 1);
+            for (;;) {
+                if (low[slot] < 0) {
+                    low[slot] = a;
+                    high[slot] = b;
+                    uses[slot] = 1;
+                    break;
+                }
+                if (low[slot] === a && high[slot] === b) {
+                    uses[slot] = 2;
+                    break;
+                }
+                slot = (slot + 1) & (edgeSize - 1);
+            }
+        }
+    }
+    for (let slot = 0; slot < edgeSize; slot++) {
+        if (uses[slot] === 1)
+            return false;
+    }
+    return true;
+}
 // ============================================================================
 // ClippingMaterials - Factory for clipping-related materials
 // ============================================================================
@@ -12248,7 +12362,7 @@ class Clipping extends THREE.Group {
                     // its up-to-3 per-plane stencil groups + cap quads).
                     let unit = unitsBySolid.get(group);
                     if (unit === undefined) {
-                        unit = { solid: group, stencilGroups: [], capMeshes: [], radiusPx: 0 };
+                        unit = { solid: group, stencilGroups: [], capMeshes: [], radiusPx: 0, closed: null };
                         unitsBySolid.set(group, unit);
                     }
                     unit.stencilGroups.push(clippingGroup);
@@ -12374,9 +12488,16 @@ class Clipping extends THREE.Group {
             // gated jointly because an orphaned stencil write with no cap to clear it
             // would corrupt the next solid's cap.
             const box = solidPass ? this._solidWorldBox(unit.solid) : null;
+            // HAMMEROLA'S PATCH: and only a closed surface is capped. Decided once, on
+            // the first frame the solid could be capped, so a model nobody cuts never
+            // pays for the test.
+            if (box !== null && unit.closed === null) {
+                unit.closed = closedSurface(unit.solid);
+            }
+            const capped = unit.closed === true ? box : null;
             for (let k = 0; k < unit.capMeshes.length; k++) {
                 const cap = unit.capMeshes[k];
-                const planeHit = box !== null && this.clipPlanes[cap.index].intersectsBox(box);
+                const planeHit = capped !== null && this.clipPlanes[cap.index].intersectsBox(capped);
                 unit.stencilGroups[k].visible = planeHit;
                 cap.visible = planeHit;
             }

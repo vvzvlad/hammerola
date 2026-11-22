@@ -93,7 +93,7 @@ export const GIZMO_ORDER = 1031;
  * section; an empty array, matching the library's own materials.
  *
  * `depthWrite: false`, as in the library's always-visible materials
- * (`viewer/src/scene/clipping.ts:96`, `viewer/src/scene/nestedgroup.ts:970`):
+ * (`viewer/src/scene/clipping.ts:217`, `viewer/src/scene/nestedgroup.ts:970`):
  * a surface that ignores depth must not stamp its distance over nearer
  * geometry.
  *
