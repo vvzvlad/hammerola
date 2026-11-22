@@ -506,7 +506,7 @@ describe('the vendored files still say what the cut-face menu rests on', () => {
     // correction off silently, which is why they are pinned by text.
     const source = bundle()
     expect(source).toContain(
-      'unit = { solid: group, stencilGroups: [], capMeshes: [], radiusPx: 0 };')
+      'unit = { solid: group, stencilGroups: [], capMeshes: [], radiusPx: 0, closed: null };')
     expect(source).toContain('this._capUnits = [...unitsBySolid.values()];')
     // The cap carries the plane it belongs to, which is what lets the section
     // plane's cap be found by `index` rather than by its position in the list.

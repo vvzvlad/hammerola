@@ -284,7 +284,7 @@ is selected»; `true` ставится только из `switchToTab("clip")`
 Лечится `viewer.setLocalClipping(true)` (`viewer/src/core/viewer.ts:2014`). Для торцевых
 крышек дополнительно нужен `clipping.setVisible(true)`: в `render()` стоит
 `setVisible(false)` (`viewer/src/core/viewer.ts:1699`), а
-`Clipping.cull(..., clipActive)` (`viewer/src/scene/clipping.ts:694`) при `false` гасит
+`Clipping.cull(..., clipActive)` (`viewer/src/scene/clipping.ts:815`) при `false` гасит
 все стенсилы и cap-меши.
 
 **У нас это уже решено** — `keepSectionCut()` в `ui/src/viewport/section.js`,
