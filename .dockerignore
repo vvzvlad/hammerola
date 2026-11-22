@@ -69,7 +69,7 @@ ui/node_modules
 ui/dist
 # A workstation's `make ui` output, which `COPY static/ static/` would otherwise
 # carry into the image — the same net as in .gitignore, deliberately wider than
-# today's single file.
+# today's two files.
 #
 # The Dockerfile's copy ORDER is the other half of this and does not replace it.
 # Order only settles a file the stage also emits, because winning means being

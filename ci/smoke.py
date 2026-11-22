@@ -176,10 +176,11 @@ REQUIRED_PATHS = [
     # ...and the other one, `import kicadboard`, copied the same way; missing, only the first
     # build of a model that places a board fails.
     "/app/kicadboard.py",
-    # The browser bundle, compiled by the `ui` stage and copied out of it by name. One path
-    # because vite emits one file (see ui/vite.config.mjs); a new output adds a row here and a
-    # COPY line in the Dockerfile.
+    # The browser bundle, compiled by the `ui` stage and copied out of it by name: the entry
+    # and the chunk the Files window imports for text (see ui/vite.config.mjs); a new output
+    # adds a row here and a COPY line in the Dockerfile.
     "/app/static/_v/hammerola.js",
+    "/app/static/_v/hammerola-editor.js",
     # The onboarding files (src/onboarding.py), one per copied tree. Check (h) asks the same
     # route; this row names the missing file, (h) names the answer a visitor gets.
     # SKILL.md also survives `.dockerignore`'s root-only `*.md` rule; widening it to

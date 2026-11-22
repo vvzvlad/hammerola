@@ -1,8 +1,8 @@
 # ui/ — the hub's browser interface
 
 React sources for the page the hub serves at `/<project>/<build>/`. Built with
-vite into a single ES module; the hub itself serves the result as a plain static
-file and knows nothing about node.
+vite into two ES modules, the entry and the editor chunk; the hub itself serves
+them as plain static files and knows nothing about node.
 
 ```bash
 make ui        # from the repository root: build and copy into static/_v/
@@ -10,7 +10,9 @@ make ui        # from the repository root: build and copy into static/_v/
 
 Nothing here is imported by the Python side, and nothing here runs on the
 server. The output is `static/_v/hammerola.js`, loaded by `templates/build.html`
-with a `<script type="module" src="/_v/hammerola.js">`.
+with a `<script type="module" src="/_v/hammerola.js">`, and
+`static/_v/hammerola-editor.js`, CodeMirror from `src/editor/editor.js`, which
+the Files window imports the first time it opens a text file.
 
 ## Why the output is flat, beside the committed assets
 
@@ -26,16 +28,16 @@ The consequence is that built files share a directory with committed ones —
 `tokens.css`, `site.css`, `pointer.js`, `pointer_pref.js`,
 `three-cad-viewer.esm.js`, `ecad-viewer.js` —
 so **everything that copies this build copies it BY NAME**, one file per line:
-`UI_FILES` in the `Makefile`, `COPY --from=ui /ui/dist/hammerola.js
-static/_v/hammerola.js` in the `Dockerfile`. Never a directory copy. A directory
+`UI_FILES` in the `Makefile`, a `COPY --from=ui /ui/dist/<name>
+static/_v/<name>` line per file in the `Dockerfile`. Never a directory copy. A directory
 copy merges, and a merge means a chunk that vite happened to call `pointer.js`
 replaces the hub's own `pointer.js` — silently, with the publish gate still green,
 because the gate asks whether a path exists and after such an overwrite it
 still does.
 
-When this build starts emitting a second file, it needs three edits in one
-commit: a name in `UI_FILES`, a `COPY` line in the `Dockerfile`, a row in
-`REQUIRED_PATHS` in `ci/smoke.py`. Both ways of getting that wrong are caught —
+Each emitted file has three entries, added in one commit: a name in
+`UI_FILES`, a `COPY` line in the `Dockerfile`, a row in `REQUIRED_PATHS` in
+`ci/smoke.py`. Both ways of getting that wrong are caught —
 a file listed but no longer produced fails the image build at its `COPY` line,
 and a file produced but not listed simply never enters the image, which is what
 `REQUIRED_PATHS` is for.
@@ -113,11 +115,11 @@ change once the real component is on screen, not for folding it into this one.
 
 ## Output file names carry no hash
 
-`hammerola.js`, not `hammerola-a1b2c3d4.js`. The reasoning is in
-`vite.config.mjs` beside the setting; the short version is that this name is
-written by hand in four other files (the page template, the Makefile, the
-Dockerfile and the publish gate), a hashed name would have to be rediscovered by
-all of them on every build, and cache invalidation is the hub's job because the
+`hammerola.js` and `hammerola-editor.js`, not `hammerola-a1b2c3d4.js`. The
+reasoning is in `vite.config.mjs` beside the setting; the short version is that
+these names are written by hand in other files (the page template for the entry,
+the Makefile, the Dockerfile and the publish gate for both), a hashed name would
+have to be rediscovered by all of them on every build, and cache invalidation is the hub's job because the
 hub is what serves the file and sets the headers.
 
 `tests/test_ui_bundle.py` is what keeps those copies of the path in step — it
@@ -128,9 +130,11 @@ symptom otherwise is a green gate and a 404 in the browser.
 
 `src/BuildPage.jsx` is the build page's root, which `src/main.jsx` mounts: the
 header, `src/Header.jsx` — the title, the variants, the revision picker,
-Downloads, the token, Comments, the theme and the tab strip — over the page the
+Files, the token, Comments, the theme and the tab strip — over the page the
 build has, and the token, the theme, whether the header draws its tab strip,
-`builds.json` and the rename window, which belong to neither page.
+`builds.json`, the rename window and the Files window (`src/files.jsx`: the
+revision's files as a tree, each opened in a pane — text in CodeMirror from the
+lazy `src/editor/`, images, PDFs), which belong to neither page.
 `src/HammerolaViewer.jsx` is the model's page — the tree, the panels and every
 gesture the reader has on a build. Its view model is cut into one module per
 panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,

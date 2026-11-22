@@ -702,6 +702,17 @@ def test_the_policy_allows_what_the_kicad_viewer_builds_itself(hub):
             ["'self'", "'wasm-unsafe-eval'"]), policy
 
 
+def test_the_policy_lets_the_files_window_frame_a_pdf(hub):
+    # SPEC 7.4: the Files window (ui/src/files.jsx) shows a PDF of the revision in a
+    # frame from a `blob:` address it makes of the fetched bytes, which `'self'` does
+    # not cover; the documents' frames come from this origin, so `'self'` stays.
+    hub.publish("proj1", "abc123", good_build())
+    for path in ("/", "/project/proj1/abc123/"):
+        policy = hub.get(path).headers["Content-Security-Policy"]
+        frames = _csp_sources(policy, "frame-src")
+        assert "'self'" in frames and "blob:" in frames, policy
+
+
 def test_the_index_page_has_no_inline_script(hub):
     # An inline script would be blocked by our own CSP, i.e. a blank index page.
     # The front page is drawn by the React bundle now, exactly like the build

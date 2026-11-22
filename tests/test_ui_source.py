@@ -18,8 +18,9 @@ silent failure (the build is green, one feature is inert):
   * the comment form posts to a route with field names the hub decides; a rename
     gets a 404 or a 422 with the text already typed;
 
-  * the bundle must stay ONE output file, because five files copy it by name (see
-    ui/vite.config.mjs); a dynamic import or imported stylesheet adds a second;
+  * the bundle is TWO output files, the entry and the editor's chunk, because
+    five files copy them by name (see ui/vite.config.mjs); another dynamic import
+    or an imported stylesheet adds a third;
 
   * the page is served under `default-src 'self'` (src/app.py), so an external
     font or CDN reference is silently blocked in production.
@@ -362,8 +363,8 @@ def test_the_library_stylesheet_is_still_on_the_page():
     """The viewer library ships its own CSS and the page must keep linking it.
 
     Neither half of the bundle can add it: the CSP forbids nothing here, but an
-    `import` of it would make this build emit a second output file, which is the
-    one thing ui/vite.config.mjs is built to prevent.
+    `import` of it would make this build emit a CSS file beside its scripts,
+    which is the one thing ui/vite.config.mjs is built to prevent.
     """
     url = re.search(r"VIEWER_MODULE_URL\s*=\s*\"([^\"]+)\"",
                     read(VIEWPORT / "library.js")) if ADAPTER_FILES else None
@@ -590,27 +591,39 @@ def test_the_build_picker_reads_the_fields_builds_json_carries():
         f"{sorted(fields - written)}")
 
 
-# -- one output file ---------------------------------------------------------
+# -- two output files --------------------------------------------------------
+
+# The one dynamic import that is a chunk: the Files window's import of the
+# editor, which vite emits as `hammerola-editor.js` (ui/vite.config.mjs).
+EDITOR_IMPORT = (UI / "files.jsx", "import('./editor/editor.js')")
+
 
 def test_nothing_splits_the_bundle():
-    """No dynamic import and no imported stylesheet, either of which adds a file.
+    """No dynamic import and no imported stylesheet, either of which adds a file,
+    but the Files window's import of the editor (`EDITOR_IMPORT`).
 
-    The one exception is marked in the source with `@vite-ignore`, which is what
-    turns an unanalysable specifier into a deliberate one: vite leaves it as a
-    runtime URL rather than emitting a chunk for it.
+    The other exception is marked in the source with `@vite-ignore`, which is
+    what turns an unanalysable specifier into a deliberate one: vite leaves it as
+    a runtime URL rather than emitting a chunk for it.
     """
-    offenders = []
-    for path in INTERFACE_FILES + ADAPTER_FILES:
+    offenders, chunks = [], []
+    for path in ALL_UI_FILES:
         raw = read(path).splitlines()
         # Detect on the stripped line (prose is not an import); look for the
         # exemption on the raw one, because it is a comment.
         for number, line in enumerate(strip_comments(read(path)).splitlines()):
             marker = raw[number] if number < len(raw) else ""
             if re.search(r"(?<![\w.])import\s*\(", line) and "@vite-ignore" not in marker:
-                offenders.append(f"{path.name}:{number + 1} dynamic import")
+                if path == EDITOR_IMPORT[0] and EDITOR_IMPORT[1] in line:
+                    chunks.append(f"{path.name}:{number + 1}")
+                else:
+                    offenders.append(f"{path.name}:{number + 1} dynamic import")
             if re.search(r"import\s+['\"][^'\"]+\.css['\"]", line):
                 offenders.append(f"{path.name}:{number + 1} stylesheet import")
-    assert not offenders, f"these would make the build emit a second file: {offenders}"
+    assert not offenders, f"these would make the build emit a third file: {offenders}"
+    assert len(chunks) == 1, (
+        f"the editor is imported at {chunks}, and the bundle contract names exactly "
+        f"one chunk for it, from {EDITOR_IMPORT[0].name}")
 
 
 # -- the page's own CSP ------------------------------------------------------

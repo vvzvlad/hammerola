@@ -116,6 +116,7 @@ COPY --chmod=0755 githooks/ githooks/
 # `static/_v/hammerola*` for files the stage no longer emits.
 # A new emitted file needs a line here and a row in ci/smoke.py's REQUIRED_PATHS.
 COPY --from=ui /ui/dist/hammerola.js static/_v/hammerola.js
+COPY --from=ui /ui/dist/hammerola-editor.js static/_v/hammerola-editor.js
 COPY main.py .
 # Every model.py opens with `import checklib`. This shim re-exports
 # src/cadbuild/checklib.py and has to sit at /app, because a model is imported with its own

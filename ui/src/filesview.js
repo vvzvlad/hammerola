@@ -1,8 +1,8 @@
 /**
- * The header's Files card (Header.jsx): the files of the project directory the
- * build on screen was made from, as the hub lists them
- * (`GET /api/v1/source/`, src/app.py). Pure: the address, the rows and the
- * size a row says; the fetching is the header's.
+ * The Files window (files.jsx): the files of the project directory the build on
+ * screen was made from, as the hub lists them (`GET /api/v1/source/`,
+ * src/app.py). Pure: the address, the rows, the size a row says and what the
+ * window does with a file; the fetching is the window's.
  */
 import { VARIANT_SEGMENT, buildKey } from './hub.js';
 
@@ -12,7 +12,9 @@ import { VARIANT_SEGMENT, buildKey } from './hub.js';
  *  other slot as the page addresses it, a variant's pointer under
  *  `v/<variant>/`, as a snapshot names a build. `dev` is the slot as it stands:
  *  a draft pushed over the one on screen replaces it on the hub, which keeps no
- *  other, so until the page takes the new one the card lists the new one's. */
+ *  other, so until the page takes the new one the window lists the new one's.
+ *  The window asks this one address for the list and, through `sourceFileUrl`,
+ *  for every file's bytes. */
 export function sourceUrl(page, meta) {
   const commit = page.slot === 'latest' && meta && meta.commit;
   return `/api/v1/source/${encodeURIComponent(page.pid)}/` + (commit ? encodeURIComponent(commit)
@@ -20,8 +22,8 @@ export function sourceUrl(page, meta) {
       + encodeURIComponent(page.slot));
 }
 
-/** What the card's list is held under: its address and the build itself, since
- *  `dev` keeps its address for every draft it takes (`buildKey`). */
+/** Which list the window shows: its address and the build itself, since `dev`
+ *  keeps its address for every draft it takes (`buildKey`). */
 export const filesId = (page, meta) => `${sourceUrl(page, meta)}#${buildKey(meta)}`;
 
 /** One file of the list at `url`: its path in the query, as the hub looks it up. */
@@ -29,6 +31,50 @@ export const sourceFileUrl = (url, path) => `${url}?path=${encodeURIComponent(pa
 
 /** The last segment of a path: the name a file is saved under. */
 export const baseName = (path) => String(path).split('/').pop();
+
+/** A file's extension in lower case, '' for none. */
+const extension = (path) => {
+  const name = baseName(path);
+  const dot = name.lastIndexOf('.');
+  return dot > 0 ? name.slice(dot + 1).toLowerCase() : '';
+};
+
+/** Above this many bytes (as `sizeText` counts a megabyte) the window does not
+ *  fetch a file: over the largest text files read by hand, a `.kicad_pcb` of
+ *  12.8 MB, and under an ASCII STEP of a whole assembly, up to 61 MB. */
+export const LARGE_FILE = 16e6;
+
+const IMAGES = new Set(['png', 'jpg', 'jpeg', 'gif', 'webp']);
+
+/** What the window does with a file of the list, by its path and its listed
+ *  size: `large` is not fetched, `image` and `pdf` are drawn from their bytes,
+ *  `text` is fetched and decoded (`decodeText`), and turns out binary when it
+ *  does not decode. */
+export function fileKind(path, size) {
+  if (size > LARGE_FILE) return 'large';
+  const ext = extension(path);
+  if (IMAGES.has(ext)) return 'image';
+  return ext === 'pdf' ? 'pdf' : 'text';
+}
+
+/** The bytes of a file as text, or null where they are not text: not UTF-8, or
+ *  holding a NUL. `ignoreBOM` keeps a byte-order mark as the text's first
+ *  character instead of dropping it. */
+export function decodeText(bytes) {
+  let text;
+  try {
+    text = new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }).decode(bytes);
+  } catch {
+    return null;
+  }
+  return text.includes('\0') ? null : text;
+}
+
+const LANGUAGES = new Map([['py', 'python'], ['json', 'json']]);
+
+/** The language the text pane highlights a file in (`mount` in
+ *  editor/editor.js), '' for none. */
+export const editorLanguage = (path) => LANGUAGES.get(extension(path)) || '';
 
 /** A file's size as a row says it. */
 export const sizeText = (bytes) => (bytes < 1000 ? `${bytes} B`

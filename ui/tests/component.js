@@ -242,7 +242,7 @@ export function headerOn(page, { state = {}, props = {}, setState = mergeState }
   const h = new Header({
     meta: has('meta'), token: has('token'), theme: 'light', builds: has('builds') || null,
     parts: () => page.headerParts(),
-    onToken: vi.fn(), onTheme: vi.fn(), onRename: vi.fn(),
+    onToken: vi.fn(), onTheme: vi.fn(), onRename: vi.fn(), onFiles: vi.fn(),
     shutPage: vi.fn(() => page.closeMenus()),
     ...props,
   })

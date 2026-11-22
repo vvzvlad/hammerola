@@ -186,6 +186,17 @@
   --mark-ink: #1c1f23;
   --mark-hole: #ffffff;
 
+  /* -- code in the Files window -------------------------------------------
+   * The colours of the highlighted tokens in a file's text
+   * (ui/src/editor/editor.js): keywords, strings, numbers and other
+   * literals, comments, and the names a definition introduces. Inks on
+   * `--card-bg`, so the dark set lifts them as it lifts the accent's ink. */
+  --code-keyword: #8250df;
+  --code-string: #0a7a3e;
+  --code-number: #b35900;
+  --code-comment: #6b727a;
+  --code-name: #1c67c2;
+
   /* -- the 3D canvas -------------------------------------------------------
    * WHAT YOU SEE BEHIND THE MODEL, and it really is this declaration rather
    * than something the renderer paints: the WebGL context is cleared to
@@ -330,6 +341,12 @@
 
   --mark-ink: #f2f4f6;
   --mark-hole: #1c1f23;
+
+  --code-keyword: #c297ff;
+  --code-string: #7ee2a8;
+  --code-number: #ffb36b;
+  --code-comment: #868d96;
+  --code-name: #7cb4f2;
 
   --canvas-bg: #444444;
   --studio-bg: #444444;

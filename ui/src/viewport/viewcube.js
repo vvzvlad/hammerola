@@ -536,7 +536,7 @@ export function createViewCube(vp) {
   });
 
   // The `click` is let through: the interface closes every open menu (tree
-  // row, revision dropdown, Files, token popup) from one `onClick` on its
+  // row, revision dropdown, token popup) from one `onClick` on its
   // root div (HammerolaViewer.jsx, `rootClick`). Only the press must be kept
   // off the canvas.
   svg.addEventListener("click", (event) => {

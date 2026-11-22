@@ -1954,7 +1954,7 @@ describe('what does not survive', () => {
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
     // and the header's, over the page
-    const header = headerOn(c, { state: { revOpen: true, filesOpen: true, tokenPop: true } })
+    const header = headerOn(c, { state: { revOpen: true, tokenPop: true } })
     loadMeta.mockResolvedValue(build())
 
     await c.switchBuild('proj1', B)
@@ -1962,7 +1962,7 @@ describe('what does not survive', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect([header.state.revOpen, header.state.filesOpen, header.state.tokenPop]).toEqual([false, false, false])
+    expect([header.state.revOpen, header.state.tokenPop]).toEqual([false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.notePop).toBeNull()
@@ -2176,7 +2176,7 @@ describe('taking the banner\'s build', () => {
       moved: { id: '/model/plate', name: 'plate', mag: 2 },
     })
     // and the header's, over the page
-    const header = headerOn(c, { state: { revOpen: true, filesOpen: true, tokenPop: true } })
+    const header = headerOn(c, { state: { revOpen: true, tokenPop: true } })
     delete c.sync
     const seen = []
     const listen = (event) => seen.push(event.detail)
@@ -2188,7 +2188,7 @@ describe('taking the banner\'s build', () => {
     expect(c.state.sel).toBeNull()
     expect(c.state.selName).toBe('')
     expect(c.state.menu).toBeNull()
-    expect([header.state.revOpen, header.state.filesOpen, header.state.tokenPop]).toEqual([false, false, false])
+    expect([header.state.revOpen, header.state.tokenPop]).toEqual([false, false])
     expect(c.state.viewsOpen).toBe(false)
     expect(c.state.secPop).toBe(false)
     expect(c.state.notePop).toBeNull()

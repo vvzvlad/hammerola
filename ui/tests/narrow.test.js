@@ -400,10 +400,10 @@ describe('the header row', () => {
   it('shuts its menu as a row opens what it stands for, and on a click anywhere else', () => {
     // A row calls what its wide button calls; the sheet it opens lies along
     // the bottom edge, and a menu left open over the model would hide it.
-    // The first three are the header's own cards, the last two the page's.
+    // The first two are the header's own cards, the last two the page's.
     const c = component({ narrow: true })
     const h = headerOn(c)
-    const opens = [[REV.slice(0, 7), 'revOpen'], ['Files', 'filesOpen'], ['Editing on', 'tokenPop'],
+    const opens = [[REV.slice(0, 7), 'revOpen'], ['Editing on', 'tokenPop'],
                    ['Parts', 'treeOpen'], ['Comments', 'rail']]
     for (const [said, field] of opens) {
       h.view().headMenuToggle(click)
@@ -412,8 +412,11 @@ describe('the header row', () => {
       expect([said, holder.state[field], h.state.headMenu]).toEqual([said, true, false])
     }
 
-    // The title's pencil stops its click, so the rename window shuts the menu
-    // itself rather than leaving it to come back when the window closes.
+    // Files and the title's pencil open BuildPage's windows, and put the menu
+    // down themselves rather than leave it to come back when the window closes.
+    h.view().headMenuToggle(click)
+    menuRow(h, 'Files').props.onClick(click)
+    expect([h.props.onFiles.mock.calls.length, h.state.headMenu]).toEqual([1, false])
     h.view().headMenuToggle(click)
     h.view().renameTitle()
     expect([h.props.onRename.mock.calls.length, h.state.headMenu]).toEqual([1, false])
@@ -689,7 +692,7 @@ describe('the popovers that become a sheet on a narrow page', () => {
     const c = component(over)
     const v = c.computed()
     const h = headerOn(c).view()
-    return [h.revMenuStyle, h.filesMenuStyle, h.tokenPopStyle,
+    return [h.revMenuStyle, h.tokenPopStyle,
             v.secPopStyle, v.notePopStyle].map(css)
   }
 
@@ -726,10 +729,6 @@ describe('the popovers that become a sheet on a narrow page', () => {
     expect(css(c.view().revMenuStyle).display).toBe('none')
     c.view().revToggle(click)
     expect(css(c.view().revMenuStyle).display).toBe('block')
-
-    expect(css(c.view().filesMenuStyle).display).toBe('none')
-    c.view().filesToggle(click)
-    expect(css(c.view().filesMenuStyle).display).toBe('block')
 
     expect(css(c.view().tokenPopStyle).display).toBe('none')
     c.view().tokenToggle(click)

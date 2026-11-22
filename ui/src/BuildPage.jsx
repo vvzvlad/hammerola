@@ -8,12 +8,15 @@
 // whether the header draws its strip of projects (`tabStrip`, which the model
 // page's Settings card sets through `onTabStrip`) and the variant's
 // `builds.json`, read with the token; and it draws the rename
-// window a pencil opens. The page tells the header it changed (`onHeader`);
-// each shuts the other's menus (`shutHeader`, `shutPage`).
+// window a pencil opens and the Files window the header's Files opens
+// (files.jsx), the latter with the token only. The page tells the header it
+// changed (`onHeader`); each shuts the other's menus (`shutHeader`, `shutPage`).
 
 import React from 'react';
 
 import DocShell, { DOCUMENTS_KIND } from './DocShell.jsx';
+import { FilesWindow } from './files.jsx';
+import { filesId, sourceUrl } from './filesview.js';
 import HammerolaViewer from './HammerolaViewer.jsx';
 import Header from './Header.jsx';
 import { buildKey, loadBuilds, PAGE, pageVariant } from './hub.js';
@@ -35,6 +38,7 @@ export default class BuildPage extends React.Component {
     super(props);
     this.state = {
       meta: props.meta, token: readToken(), theme: readTheme(), tabStrip: readTabStrip(), builds: null, rename: null,
+      files: false,
     };
     this.header = React.createRef();
     this.page = React.createRef();
@@ -51,6 +55,7 @@ export default class BuildPage extends React.Component {
     // A rename goes on the branch of the page's variant unless the subject
     // names another (a variant's row).
     this.onRename = (subject) => this.setState({ rename: { variant: pageVariant(PAGE, this.state.meta), ...subject } });
+    this.onFiles = () => this.setState({ files: true });
     this.toast = (said) => this.page.current.toast(said);
   }
 
@@ -91,14 +96,14 @@ export default class BuildPage extends React.Component {
   }
 
   render() {
-    const { meta, token, theme, tabStrip, builds, rename } = this.state;
+    const { meta, token, theme, tabStrip, builds, rename, files } = this.state;
     const Page = meta && meta.kind === DOCUMENTS_KIND ? DocShell : HammerolaViewer;
     return (
       <div style={{ ...css(ROOT), ...FONTS }}>
         <style>{RENAME_CSS}</style>
         <Header ref={this.header} meta={meta} token={token} theme={theme} tabStrip={tabStrip} builds={builds}
                 parts={this.parts} onToken={this.onToken} onTheme={this.onTheme}
-                onRename={this.onRename} shutPage={this.shutPage} />
+                onRename={this.onRename} onFiles={this.onFiles} shutPage={this.shutPage} />
         <div style={css(BODY)}>
           <Page ref={this.page} meta={meta} token={token} theme={theme} builds={builds}
                 tabStrip={tabStrip} onTabStrip={this.onTabStrip}
@@ -109,6 +114,14 @@ export default class BuildPage extends React.Component {
           <RenameWindow subject={rename}
                         onSave={(name) => saveRename(PAGE.pid, rename, name, token, this.toast)}
                         onClose={() => this.setState({ rename: null })} />
+        )}
+        {/* Keyed by the build on screen: another build taking its place opens
+            the window afresh on that build's files. */}
+        {files && token && (
+          <FilesWindow key={filesId(PAGE, meta)} source={sourceUrl(PAGE, meta)} token={token} theme={theme}
+                       subtitle={[meta.project, pageVariant(PAGE, meta), String(meta.commit || '').slice(0, 7)]
+                         .filter(Boolean).join(' · ')}
+                       toast={this.toast} onClose={() => this.setState({ files: false })} />
         )}
       </div>
     );

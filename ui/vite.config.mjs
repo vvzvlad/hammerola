@@ -2,14 +2,17 @@
 //
 // This build produces, from src/main.jsx:
 //
-//     dist/hammerola.js   -- the whole bundle: the entry, React and ReactDOM
+//     dist/hammerola.js          -- the entry, React and ReactDOM
+//     dist/hammerola-editor.js   -- CodeMirror, from src/editor/editor.js, which
+//                                   the Files window (src/files.jsx) imports
+//                                   the first time it opens a text file
 //
 // and nothing else. No index.html (the hub renders templates/build.html and
-// loads this file with a <script type="module">), no second chunk (nothing is
-// imported dynamically), no CSS asset (nothing imports a stylesheet).
+// loads the entry with a <script type="module">), no other chunk (nothing else
+// is imported dynamically), no CSS asset (nothing imports a stylesheet).
 //
 // That list is a contract: everything downstream copies these files by name. A
-// second output file has to be named in `UI_FILES` in the Makefile, a
+// new output file has to be named in `UI_FILES` in the Makefile, a
 // `COPY --from=ui` line in the Dockerfile, and `REQUIRED_PATHS` in ci/smoke.py,
 // or it never reaches the image while the gate stays green.
 //
