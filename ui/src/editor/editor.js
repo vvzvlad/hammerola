@@ -10,12 +10,12 @@
 // comes in as arguments, and the colours as the page's CSS variables
 // (static/_v/tokens.css), which resolve against the theme on `<html>`.
 
-import { defaultKeymap } from '@codemirror/commands';
+import { defaultKeymap, history, historyKeymap } from '@codemirror/commands';
 import { json } from '@codemirror/lang-json';
 import { python } from '@codemirror/lang-python';
 import { syntaxHighlighting } from '@codemirror/language';
 import { search, searchKeymap } from '@codemirror/search';
-import { EditorState } from '@codemirror/state';
+import { Compartment, EditorState } from '@codemirror/state';
 import { drawSelection, EditorView, keymap, lineNumbers } from '@codemirror/view';
 import { classHighlighter } from '@lezer/highlight';
 
@@ -56,11 +56,15 @@ const look = (dark) => EditorView.theme({
 /**
  * CodeMirror over `text`, inside `element`. `language` is a name out of
  * `editorLanguage` (filesview.js), '' for plain text; `readOnly` refuses every
- * change; `onChange(text)`, when given, hears each one; `theme` is the page's,
- * `light` or `dark`. -> `{getText, destroy}`.
+ * change, and `setReadOnly(flag)` turns that on and off in place, the text,
+ * the cursor and the scroll kept; Ctrl/Cmd+Z undoes a change and
+ * Ctrl+Y or Shift+Cmd+Z redoes it; `onChange(text)`, when given, hears each
+ * change, undone and redone ones too; `theme` is the page's, `light` or `dark`.
+ * -> `{getText, setReadOnly, destroy}`.
  */
 export function mount(element, { text, language, readOnly, onChange, theme }) {
   const highlight = LANGUAGES.get(language);
+  const locked = new Compartment();
   const view = new EditorView({
     parent: element,
     state: EditorState.create({
@@ -69,10 +73,11 @@ export function mount(element, { text, language, readOnly, onChange, theme }) {
         lineNumbers(),
         drawSelection(),
         search(),
-        keymap.of([...searchKeymap, ...defaultKeymap]),
+        history(),
+        keymap.of([...searchKeymap, ...historyKeymap, ...defaultKeymap]),
         syntaxHighlighting(classHighlighter),
         highlight ? highlight() : [],
-        EditorState.readOnly.of(!!readOnly),
+        locked.of(EditorState.readOnly.of(!!readOnly)),
         onChange ? EditorView.updateListener.of((update) => {
           if (update.docChanged) onChange(update.state.doc.toString());
         }) : [],
@@ -80,5 +85,9 @@ export function mount(element, { text, language, readOnly, onChange, theme }) {
       ],
     }),
   });
-  return { getText: () => view.state.doc.toString(), destroy: () => view.destroy() };
+  return {
+    getText: () => view.state.doc.toString(),
+    setReadOnly: (flag) => view.dispatch({ effects: locked.reconfigure(EditorState.readOnly.of(!!flag)) }),
+    destroy: () => view.destroy(),
+  };
 }

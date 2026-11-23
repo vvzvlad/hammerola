@@ -546,6 +546,25 @@ def test_the_variant_addressing_is_the_store_s(name, python):
     assert declared.group(1) == getattr(store, python)
 
 
+@pytest.mark.parametrize("name, python", [("alreadyThere", "ALREADY_THERE"),
+                                          ("fileInTheWay", "FILE_IN_THE_WAY"),
+                                          ("folderInTheWay", "FOLDER_IN_THE_WAY")])
+def test_the_files_window_refuses_a_path_in_the_hub_s_words(name, python):
+    """The Files window says under its field what Commit would meet for the
+    path typed, before the hub is asked (issue #161): a sentence of its own
+    would tell the reader one thing as he types and the hub another at
+    Commit."""
+    from src import pagecommit
+
+    declared = re.search(rf"export\s+const\s+{name}\s*=\s*\(path\)\s*=>\s*`([^`]*)`",
+                         strip_comments(read(UI / "changeset.js")))
+    assert declared, (
+        f"ui/src/changeset.js no longer declares {name} as one template "
+        f"literal of `path`; this check reads it as text, because the Python "
+        f"side cannot be imported into the JS suite")
+    assert declared.group(1).replace("${path}", "{path}") == getattr(pagecommit, python)
+
+
 def test_the_compare_legend_says_what_the_hub_says_not_compared_means():
     """One explanation of one word, written on both sides of the wire.
 

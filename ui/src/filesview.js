@@ -17,10 +17,14 @@ import { VARIANT_SEGMENT, buildKey } from './hub.js';
  *  for every file's bytes. */
 export function sourceUrl(page, meta) {
   const commit = page.slot === 'latest' && meta && meta.commit;
-  return `/api/v1/source/${encodeURIComponent(page.pid)}/` + (commit ? encodeURIComponent(commit)
-    : (page.variant ? `${VARIANT_SEGMENT}/${encodeURIComponent(page.variant)}/` : '')
-      + encodeURIComponent(page.slot));
+  return commit ? baseUrl(page.pid, commit) : `/api/v1/source/${encodeURIComponent(page.pid)}/`
+    + (page.variant ? `${VARIANT_SEGMENT}/${encodeURIComponent(page.variant)}/` : '')
+    + encodeURIComponent(page.slot);
 }
+
+/** The list's address for build `base` by its name — the one a change set is
+ *  on, whichever revision the page shows. */
+export const baseUrl = (pid, base) => `/api/v1/source/${encodeURIComponent(pid)}/${encodeURIComponent(base)}`;
 
 /** Which list the window shows: its address and the build itself, since `dev`
  *  keeps its address for every draft it takes (`buildKey`). */
@@ -87,33 +91,41 @@ const text = (a, b) => (a < b ? -1 : a > b ? 1 : 0);
  * `[{path, name, depth, dir, open, size}]`: in each directory its directories
  * first, then its files, each alphabetically; a directory's rows follow it only
  * when `open[path]` is `true`, so everything below the top is shut until the
- * reader opens it. Maps, because a name out of a pushed tree may be
- * `__proto__`.
+ * reader opens it. A file's other fields (`mark`, `gone`, … of `overlay` in
+ * changeset.js) ride on its row; `folders` are directories with no file in
+ * them, and a directory with nothing under it is `empty`. Maps, because a name
+ * out of a pushed tree may be `__proto__`, keyed by kind as well, since a set
+ * of changes can hold a file and a folder of one name for a while.
  */
-export function fileRows(files, open) {
+export function fileRows(files, open, folders = []) {
   const root = new Map();
-  files.forEach(({ path, size }) => {
+  const dirIn = (level, name, path) => {
+    const key = `d:${name}`;
+    if (!level.has(key)) level.set(key, { name, path, dir: true, children: new Map() });
+    return level.get(key).children;
+  };
+  const place = (path) => {
     const names = String(path).split('/');
     let level = root;
-    names.forEach((name, at) => {
-      if (at === names.length - 1) {
-        level.set(name, { name, path, size, dir: false });
-        return;
-      }
-      if (!level.has(name)) {
-        level.set(name, { name, path: names.slice(0, at + 1).join('/'), dir: true, children: new Map() });
-      }
-      level = level.get(name).children;
-    });
+    names.slice(0, -1).forEach((name, at) => { level = dirIn(level, name, names.slice(0, at + 1).join('/')); });
+    return { level, name: names[names.length - 1] };
+  };
+  files.forEach((file) => {
+    const { level, name } = place(file.path);
+    level.set(`f:${name}`, { ...file, name, dir: false });
+  });
+  folders.forEach((folder) => {
+    const { level, name } = place(folder);
+    dirIn(level, name, folder);
   });
   const rows = [];
   const walk = (level, depth) => {
     [...level.values()]
       .sort((a, b) => (b.dir - a.dir) || text(a.name, b.name))
-      .forEach((node) => {
+      .forEach(({ children, ...node }) => {
         const opened = node.dir && open[node.path] === true;
-        rows.push({ path: node.path, name: node.name, depth, dir: node.dir, open: opened, size: node.size });
-        if (opened) walk(node.children, depth + 1);
+        rows.push({ ...node, depth, open: opened, ...(node.dir ? { empty: children.size === 0 } : {}) });
+        if (opened) walk(children, depth + 1);
       });
   };
   walk(root, 0);
