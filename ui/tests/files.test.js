@@ -9,11 +9,11 @@ import { afterEach, beforeEach, describe, expect, it, onTestFinished, vi } from 
 
 import BuildPage from '../src/BuildPage.jsx'
 import {
-  alreadyThere, changeRows, editText, move, notAPath, putFile, remove, revert, startSet,
+  alreadyThere, changeRows, editText, entryKey, isEmpty, move, newFile, newFolder, notAPath, putFile, remove, revert, startSet,
 } from '../src/changeset.js'
 import {
-  BRANCH_MOVED, COMMIT_POLL_MS, CONFLICTED, EDITOR_FAILED, FilesWindow, HUB_LOST, NO_FOLDERS, OVER_THEIRS, QUEUED,
-  TEXT_REST_MS, commitSet, editingLine, notNewestLine,
+  BRANCH_MOVED, COMMIT_POLL_MS, CONFLICTED, EDITOR_FAILED, FilesWindow, HIDE_LIST, HUB_LOST, NO_FOLDERS, OVER_THEIRS,
+  QUEUED, SHOW_LIST, TEXT_REST_MS, commitSet, editingLine, notNewestLine,
 } from '../src/files.jsx'
 import { baseUrl, decodeText, editorLanguage, fileKind, fileRows, filesId, sourceUrl } from '../src/filesview.js'
 import HammerolaViewer from '../src/HammerolaViewer.jsx'
@@ -492,6 +492,29 @@ describe('the Files window', () => {
     }
   })
 
+  it('hands the text up before Revert all takes the set back, so nothing is edited after it', async () => {
+    const onSet = vi.fn()
+    const set = editText(startSet('main', 'abc1234', LISTED.files), 'notes.txt', 'hi!', 'hi')
+    const w = await opened({ set, onSet })
+    await picked(w, 'model.py')
+    let heard
+    mount.mockImplementation((element, options) => {
+      heard = options
+      return { getText: () => 'print(22)', setReadOnly: vi.fn(), destroy: vi.fn() }
+    })
+    w.host = { current: document.createElement('div') }
+    w.mountEditor()
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] })
+    try {
+      heard.onChange()
+      by(w, 'Revert all').props.onClick()
+      vi.advanceTimersByTime(TEXT_REST_MS * 2)
+      expect(onSet.mock.calls.map(([next]) => listed(next))).toEqual([['M notes.txt', 'M model.py'], []])
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
   it('puts an upload or a drop into the folder chosen, and toasts a name the hub would refuse', async () => {
     const onSet = vi.fn()
     const w = await opened({ start: START, onSet })
@@ -538,6 +561,100 @@ describe('the Files window', () => {
     by(w, OVER_THEIRS).props.onClick()
     by(w, 'Revert').props.onClick()
     expect([onCommit.mock.calls, listed(onSet.mock.calls[0][0])]).toEqual([[[['model.py']]], ['D notes.txt']])
+  })
+})
+
+describe('the Files window, the mockup\'s controls', () => {
+  const FILES = [{ path: 'model.py', size: 8 }, { path: 'notes.txt', size: 2 }, { path: 'a.md', size: 1 }]
+  const SET = remove(putFile(startSet('main', 'abc1234', FILES), 'model.py', new Blob(['x'])), 'notes.txt')
+  const by = (w, text) => collect(w.render(), (el) => (el.props.children === text ? el : undefined))[0]
+
+  beforeEach(() => {
+    vi.stubGlobal('fetch', vi.fn(async () => ({ status: 200, json: async () => ({ files: FILES }) })))
+  })
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  async function opened(props = {}) {
+    const w = new FilesWindow({ source: '/s', token: 't', theme: 'dark', toast: vi.fn(), onClose: vi.fn(), ...props })
+    w.setState = (patch) => Object.assign(w.state, patch)
+    await w.loadList()
+    return w
+  }
+
+  /** The picked file's head: the 44 px bar holding the span titled with its path
+   *  (a tree row is as tall on a narrow window, and Changes titles its rows too). */
+  const headOf = (w) => collect(w.render(), (el) => (el.props.style && el.props.style.height === '44px'
+    && [].concat(el.props.children).flat(Infinity)
+      .some((kid) => kid && kid.type === 'span' && kid.props.title === w.state.picked.path) ? el : undefined))[0]
+  /** The window with `path` picked, as the set has it. */
+  async function pickedOn(set, path, props = {}) {
+    const w = await opened({ set, onSet: vi.fn(), ...props })
+    w.state.picked = { path, size: 1, kind: 'text', text: 'x' }
+    return w
+  }
+
+  it('Revert all empties the set, wide or narrow, new folders too', async () => {
+    const withFolder = newFolder(SET, 'empty')
+    for (const narrow of [false, true]) {
+      const onSet = vi.fn()
+      const w = await opened({ set: withFolder, onSet })
+      w.state.narrow = narrow
+      by(w, 'Revert all').props.onClick()
+      expect(isEmpty(onSet.mock.calls[0][0])).toBe(true)
+    }
+  })
+
+  it('the head of the open file says what the set did to it and reverts that record', async () => {
+    const modified = await pickedOn(SET, 'model.py')
+    expect(texts(headOf(modified))).toEqual(expect.arrayContaining(['Modified', 'Revert', 'Download']))
+    collect(headOf(modified), (el) => (el.props.children === 'Revert' ? el : undefined))[0].props.onClick()
+    expect(listed(modified.props.onSet.mock.calls[0][0])).toEqual(['D notes.txt'])
+    const untouched = await pickedOn(SET, 'a.md')
+    expect(['Modified', 'Revert'].filter((said) => texts(headOf(untouched)).includes(said))).toEqual([])
+    const added = await pickedOn(newFile(startSet('main', 'abc1234', FILES), 'n.md'), 'n.md')
+    expect(texts(headOf(added))).toContain('New file')
+    const moved = await pickedOn(move(startSet('main', 'abc1234', FILES), 'a.md', 'b.md'), 'b.md')
+    expect(texts(headOf(moved))).toContain('Moved')
+    collect(headOf(moved), (el) => (el.props.children === 'Revert' ? el : undefined))[0].props.onClick()
+    expect(moved.props.onSet.mock.calls[0][0].entries.some((entry) => entryKey(entry) === 'base:a.md')).toBe(false)
+  })
+
+  it('reads nothing off a Commit under way: neither Revert all nor the head Revert acts', async () => {
+    const w = await pickedOn(SET, 'model.py', { commit: { busy: true } })
+    expect(by(w, 'Revert all').props.onClick).toBeUndefined()
+    expect(collect(headOf(w), (el) => (el.props.children === 'Revert' ? el : undefined))[0].props.onClick).toBeUndefined()
+  })
+
+  it('a narrow tree screen folds the list under Changes (N), Show list toggles it, a conflict unfolds it', async () => {
+    const w = await opened({ set: SET, onSet: vi.fn(), onCommit: vi.fn() })
+    w.state.narrow = true
+    const rows = () => collect(w.render(), (el) => (el.props.children === 'Revert' ? el : undefined)).length === 2
+    expect([rows(), texts(w.render())]).toEqual([false, expect.arrayContaining(['Changes (2)', SHOW_LIST, 'Commit message', 'Commit'])])
+    by(w, SHOW_LIST).props.onClick()
+    expect([rows(), texts(w.render())]).toEqual([true, expect.arrayContaining([HIDE_LIST])])
+    by(w, HIDE_LIST).props.onClick()
+    expect(rows()).toBe(false)
+    w.props = { ...w.props, commit: { conflicts: ['model.py'] } }
+    w.componentDidUpdate({ ...w.props, commit: undefined })
+    expect([w.state.listOpen, texts(w.render())]).toEqual([true, expect.arrayContaining(['model.py', OVER_THEIRS, HIDE_LIST])])
+    const wide = await opened({ set: SET })
+    expect(texts(wide.render())).not.toContain(SHOW_LIST)
+  })
+
+  it('a narrow file screen has Revert and Download in a bottom bar and a ⋯ with the row menu in the head', async () => {
+    const w = await pickedOn(SET, 'model.py')
+    w.state.narrow = true
+    const bar = collect(w.render(), (el) => (el.props.style && el.props.style.padding === '10px 16px 22px' ? el : undefined))[0]
+    expect(texts(bar)).toEqual(['Revert', 'Download'])
+    expect(texts(headOf(w))).toEqual(expect.arrayContaining(['\u22ef']))
+    expect(['Revert', 'Download'].filter((said) => texts(headOf(w)).includes(said))).toEqual([])
+    const more = collect(headOf(w), (el) => (el.props.title === 'Actions' ? el : undefined))[0]
+    more.props.onClick()
+    expect(w.state.menu).toBe('model.py')
+    expect(texts(w.render())).toEqual(expect.arrayContaining(['Rename or move…', 'Download', 'Delete']))
+    w.back = vi.fn(() => { w.state.picked = null })
+    collect(headOf(w), (el) => (el.props.children === 'Rename or move…' ? el : undefined))[0].props.onClick({ stopPropagation() {} })
+    expect([w.back.mock.calls.length, w.state.form.subject]).toEqual([1, 'model.py'])
   })
 })
 

@@ -20,8 +20,8 @@
 import React from 'react';
 
 import {
-  bodyOf, changeRows, editText, fileAt, isEmpty, messageOf, move, newFile, newFolder, normalText, notAPath, overlay,
-  pathProblem, payload, putFile, remove, revert, startSet, uploads, withMessage,
+  bodyOf, changeRows, editText, entryKey, fileAt, isEmpty, markOf, messageOf, move, newFile, newFolder, normalText,
+  notAPath, overlay, pathProblem, payload, putFile, remove, revert, revertAll, startSet, uploads, withMessage,
 } from './changeset.js';
 import {
   baseName, baseUrl, decodeText, editorLanguage, fileKind, fileRows, sizeText, sourceFileUrl,
@@ -47,6 +47,8 @@ export const BRANCH_MOVED = 'The branch moved while this commit was building';
 export const HUB_RESTARTED = 'The hub restarted during the build';
 export const CONFLICTED = 'Changed on the hub since you opened them: ';
 export const OVER_THEIRS = 'Commit mine over theirs';
+export const SHOW_LIST = 'Show list';
+export const HIDE_LIST = 'Hide list';
 export const NO_FOLDERS = 'Folders can\'t be dropped — drop the files inside';
 
 /** How long typing rests before the text goes up to the set: each change set
@@ -80,6 +82,16 @@ const BUTTON = 'height:28px;flex:none;display:flex;align-items:center;padding:0 
   + 'cursor:pointer;user-select:none;text-decoration:none';
 const CENTER = 'flex:1;min-height:0;display:flex;flex-direction:column;align-items:center;justify-content:center;'
   + `gap:4px;padding:20px;text-align:center;background:var(--sunken-bg);font:400 13px/19px ${SANS};color:var(--text-soft)`;
+/** What a file's head calls a file the set changed, by its mark. */
+const BADGES = {
+  M: ['Modified', 'var(--warn-bg)', 'var(--warn)'],
+  A: ['New file', 'var(--accent-bg)', 'var(--accent-text)'],
+  R: ['Moved', 'var(--accent-bg)', 'var(--accent-text)'],
+};
+const BADGE = (mark) => `flex:none;padding:2px 7px;border-radius:4px;background:${BADGES[mark][1]};`
+  + `color:${BADGES[mark][2]};font:600 10.5px ${SANS}`;
+const FILE_BAR = 'flex:none;display:flex;gap:8px;padding:10px 16px 22px;border-top:1px solid var(--line);'
+  + 'background:var(--sunken-bg)';
 const OFF_BUTTON = ';color:var(--text-faint);background:var(--sunken-bg);cursor:default';
 const ACCENT_BUTTON = `height:30px;flex:none;display:flex;align-items:center;padding:0 10px;border-radius:6px;${ON_ACCENT};`
   + `font:600 12px ${SANS};cursor:pointer;user-select:none`;
@@ -129,6 +141,8 @@ const ROW_CSS = `@media (hover:hover){.${ROW_CLASS} .${MORE_CLASS}{visibility:hi
 
 const parentOf = (path) => path.split('/').slice(0, -1).join('/');
 const hasBytes = (entry) => !!entry && (entry.text !== undefined || entry.blob !== undefined);
+/** Whether the hub named paths in the last Commit that changed on it. */
+const hasConflicts = (commit) => !!(commit && commit.conflicts && commit.conflicts.length);
 const carriesFiles = (event) => !!event.dataTransfer && [...(event.dataTransfer.types || [])].includes('Files');
 const clock = (ms) => {
   const seconds = Math.max(0, Math.floor(ms / 1000));
@@ -167,11 +181,13 @@ export class FilesWindow extends React.Component {
     // `form` the field open (`{kind: 'file' | 'folder' | 'rename', subject,
     // typed, said}`); `drop` the folder a drag over the window would land in,
     // `dropRow` whether it is over that folder's row; `message` the commit
-    // message while it is being typed.
+    // message while it is being typed; `listOpen` whether a narrow window shows
+    // the rows under Changes (N), which a conflict from the hub opens.
     this.state = {
       list: null, dirs: {}, picked: null, editor: null,
       narrow: !!(window.matchMedia && window.matchMedia(NARROW).matches),
       folder: '', menu: null, form: null, drop: null, dropRow: false, message: null,
+      listOpen: hasConflicts(props.commit),
     };
     // The set as this window last left it, until BuildPage hands it back as
     // `set`: two actions in one turn must not both start from the old one.
@@ -265,6 +281,7 @@ export class FilesWindow extends React.Component {
 
   componentDidUpdate(prev) {
     if (prev.set !== this.props.set) this.unsent = undefined;
+    if (hasConflicts(this.props.commit) && !hasConflicts(prev.commit)) this.setState({ listOpen: true });
     this.mountEditor();
     this.ticking();
   }
@@ -608,6 +625,11 @@ export class FilesWindow extends React.Component {
     this.structural((set) => revert(set, key));
   }
 
+  /** Every record of the set taken back, the text typed handed up first. */
+  revertAllChanges() {
+    this.structural((set) => revertAll(set));
+  }
+
   commit(over) {
     this.flush();
     this.props.onCommit(over);
@@ -642,8 +664,10 @@ export class FilesWindow extends React.Component {
     );
   }
 
-  /** A row's ⋯ menu. */
-  menu(row) {
+  /** A tree row's ⋯ menu — Rename or move…, Download for a file, Delete — or,
+   *  on a narrow window (`fromFile`), the file head's: the Rename or move…
+   *  field stands in the tree, so that screen goes back to it. */
+  menu(row, fromFile = false) {
     const item = (label, action, danger = false) => (
       <div key={label} style={css(danger ? `${MENU_ITEM};color:var(--danger)` : MENU_ITEM)}
            onClick={(event) => {
@@ -656,7 +680,10 @@ export class FilesWindow extends React.Component {
     );
     return (
       <div onClick={(event) => event.stopPropagation()} style={css(MENU)}>
-        {item('Rename or move…', () => this.openForm('rename', row.path))}
+        {item('Rename or move…', () => {
+          if (fromFile) this.back();
+          this.openForm('rename', row.path);
+        })}
         {!row.dir && item('Download', () => this.download(row.path))}
         <div style={css('height:1px;margin:4px 0;background:var(--line-soft)')} />
         {item('Delete', () => this.structural((set) => remove(set, row.path)), true)}
@@ -757,17 +784,34 @@ export class FilesWindow extends React.Component {
     return commit.since ? `Building… ${clock(Date.now() - commit.since)}` : commit.step || QUEUED;
   }
 
-  /** Changes (N): each record with its Revert, the hub's conflicts over them,
-   *  the message, Commit, and how the last Commit went. */
+  /** Changes (N) with Revert all, and on a narrow window Show list / Hide list,
+   *  which folds the rows away until a conflict opens them; each record with
+   *  its Revert, the hub's conflicts over them, the message, Commit, and how
+   *  the last Commit went. */
   changes(set) {
     const { commit } = this.props;
     const busy = !!(commit && commit.busy);
     const rows = changeRows(set, (commit && commit.conflicts) || []);
     const conflicted = busy ? [] : rows.filter((row) => row.conflict);
     const message = this.state.message !== null ? this.state.message : messageOf(set);
+    const { narrow, listOpen } = this.state;
+    const folded = narrow && !listOpen;
     return (
       <div style={css(CHANGES)}>
-        <div style={css(`margin-bottom:6px;font:600 12px ${SANS}`)}>{`Changes (${rows.length})`}</div>
+        <div style={css(`display:flex;align-items:center;gap:12px;margin-bottom:6px;font:600 12px ${SANS}`)}>
+          <span>{`Changes (${rows.length})`}</span>
+          <span style={css(FILL)} />
+          <span onClick={busy ? undefined : () => this.revertAllChanges()}
+                style={css(busy ? `${QUIET};color:var(--text-faint);cursor:default` : `${QUIET};color:var(--accent-text)`)}>
+            Revert all
+          </span>
+          {narrow && (
+            <span onClick={() => this.setState({ listOpen: !listOpen })}
+                  style={css(`${QUIET};font-size:12.5px;color:var(--accent-text)`)}>
+              {folded ? SHOW_LIST : HIDE_LIST}
+            </span>
+          )}
+        </div>
         {conflicted.length > 0 && (
           <div style={css(`${WARN_NOTE};margin:0 0 6px`)}>
             <div>
@@ -780,7 +824,7 @@ export class FilesWindow extends React.Component {
             </span>
           </div>
         )}
-        <div style={css('max-height:30vh;overflow:auto')}>
+        {!folded && <div style={css('max-height:30vh;overflow:auto')}>
           {rows.map((row) => (
             <div key={row.key} style={css(changeRow(row.conflict && !busy))}>
               <span style={css(markStyle(row.mark))}>{row.mark}</span>
@@ -798,7 +842,7 @@ export class FilesWindow extends React.Component {
               </span>
             </div>
           ))}
-        </div>
+        </div>}
         <label htmlFor="hmr-files-message" style={css(`${LABEL};margin-top:10px`)}>Commit message</label>
         <textarea id="hmr-files-message" value={message} disabled={busy} spellCheck="false"
                   onChange={(event) => this.setState({ message: event.target.value })}
@@ -853,29 +897,52 @@ export class FilesWindow extends React.Component {
     return <div ref={this.host} style={css('flex:1;min-height:0;overflow:hidden')} />;
   }
 
-  /** The picked file: its path, what it is and its size, Open for a PDF (the
-   *  same bytes in a tab of their own: a phone may show only the first page
-   *  in a frame), Download, and the pane. The size is the tree's, so it
-   *  follows the text typed once that goes up. */
+  /** The picked file: its path, what it is and its size, a badge when the set
+   *  changed it, Open for a PDF (the same bytes in a tab of their own: a phone
+   *  may show only the first page in a frame), and the pane. Revert (of that
+   *  file's record, when it has one) and Download are in the head, and on a
+   *  narrow window in a bar under the pane, with a ⋯ menu in the head. The size
+   *  is the tree's, so it follows the text typed once that goes up. */
   file(picked) {
     const label = picked.loading && picked.kind === 'text' ? '' : KIND_LABELS[picked.kind];
     const record = fileAt(this.shown(), picked.path);
+    const { narrow } = this.state;
+    const mark = record ? markOf(record.entry) : '';
+    const busy = !!(this.props.commit && this.props.commit.busy);
+    const look = narrow ? `${BUTTON};height:34px;font-size:13px` : BUTTON;
+    const revertButton = mark && (
+      <span key="revert" onClick={busy ? undefined : () => this.revertChange(entryKey(record.entry))}
+            style={css(busy ? `${look}${OFF_BUTTON}` : look)}>
+        Revert
+      </span>
+    );
+    const download = <span key="download" onClick={() => this.download(picked.path)} style={css(look)}>Download</span>;
     return (
       <>
-        <div style={css(HEAD)}>
+        <div style={css(`${HEAD};position:relative`)}>
           <span title={picked.path} style={css(`flex:0 1 auto;min-width:0;font:600 12.5px ${MONO};${ELLIPSIS}`)}>
             {picked.path}
           </span>
           <span style={css(`flex:none;font:400 11px ${SANS};color:var(--text-muted)`)}>
             {[label, sizeText(record ? record.size : picked.size)].filter(Boolean).join(' · ')}
           </span>
+          {mark && <span style={css(BADGE(mark))}>{BADGES[mark][0]}</span>}
           <span style={css(FILL)} />
           {picked.kind === 'pdf' && picked.url && (
             <a href={picked.url} target="_blank" rel="noopener" style={css(BUTTON)}>Open</a>
           )}
-          <span onClick={() => this.download(picked.path)} style={css(BUTTON)}>Download</span>
+          {!narrow && revertButton}
+          {!narrow && download}
+          {narrow && this.canEdit() && (
+            <span title="Actions" onClick={() => this.setState({ menu: this.state.menu === picked.path ? null : picked.path })}
+                  style={css(`${MORE};width:32px;height:32px;font-size:18px`)}>
+              &#8943;
+            </span>
+          )}
+          {narrow && this.state.menu === picked.path && this.menu({ path: picked.path }, true)}
         </div>
         {this.body(picked)}
+        {narrow && <div style={css(FILE_BAR)}>{revertButton}{download}</div>}
       </>
     );
   }

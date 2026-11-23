@@ -258,6 +258,12 @@ export function revert(set, key) {
   return settle(next, next.entries);
 }
 
+/** Every record taken back and every new empty folder dropped: the set is
+ *  empty and the files are as in `base` again. Not Revert row by row, which can
+ *  leave a record behind — a move taken back onto a new file's place makes that
+ *  file an edit. */
+export const revertAll = (set) => settle(set, [], []);
+
 /** The set with the message the reader typed. */
 export const withMessage = (set, message) => ({ ...set, message });
 
