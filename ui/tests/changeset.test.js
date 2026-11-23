@@ -7,7 +7,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   alreadyThere, bodyOf, changeRows, defaultMessage, editText, fileInTheWay, folderInTheWay, isEmpty, move, newFile,
-  newFolder, normalText, notAPath, overlay, pathProblem, payload, putFile, remove, revert, startSet, uploads,
+  newFolder, normalText, notAPath, overlay, pathProblem, payload, putFile, remove, revert, revertAll, startSet, uploads,
 } from '../src/changeset.js'
 import { fileRows } from '../src/filesview.js'
 
@@ -97,6 +97,16 @@ describe('Upload, Delete, Rename or move and Revert', () => {
     const set = putFile(fresh(), 'model.py', bytes('x'))
     expect(listed(set)).toEqual(['M model.py'])
     expect(isEmpty(revert(set, changeRows(set)[0].key))).toBe(true)
+  })
+
+  it('Revert all takes every record back, a move onto a new file\'s place included', () => {
+    const set = remove(newFile(move(putFile(fresh(), 'model.py', bytes('x')), 'docs/a.md', 'a.md'), 'docs/a.md'), 'README.md')
+    expect(listed(set).length).toBeGreaterThan(2)
+    expect(isEmpty(revertAll(set))).toBe(true)
+  })
+
+  it('Revert all drops a new empty folder too, so the set is no set at all', () => {
+    expect(isEmpty(revertAll(newFolder(putFile(fresh(), 'model.py', bytes('x')), 'empty')))).toBe(true)
   })
 
   it('deletes and moves every file of a folder', () => {

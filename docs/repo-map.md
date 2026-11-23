@@ -562,7 +562,8 @@
   anything else or anything over `LARGE_FILE` as its size and Download; on a
   narrow window the pane replaces the tree. On the newest revision of its
   variant it edits: changes, uploads (Upload and drop), deletes, a new file or
-  folder, rename or move, Changes (N) with Revert, and Commit, which uploads
+  folder, rename or move, Changes (N) with Revert and Revert all, a
+  Revert and the file's mark in its head, and Commit, which uploads
   the bytes, commits the set (`POST /api/v1/source/<pid>/commit`, SPEC §7.8)
   and follows the build's job to the new revision or to the refusal
   (`commitSet`). The set itself lives in BuildPage's state, so closing the
