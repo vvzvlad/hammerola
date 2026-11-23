@@ -134,7 +134,10 @@ Files, the token, Comments, the theme and the tab strip — over the page the
 build has, and the token, the theme, whether the header draws its tab strip,
 `builds.json`, the rename window and the Files window (`src/files.jsx`: the
 revision's files as a tree, each opened in a pane — text in CodeMirror from the
-lazy `src/editor/`, images, PDFs), which belong to neither page.
+lazy `src/editor/`, images, PDFs — and on the newest revision edited into a
+change set, `src/changeset.js`, that Commit sends to the hub), which belong to
+neither page; the change set is kept in BuildPage too, so it outlives the
+window.
 `src/HammerolaViewer.jsx` is the model's page — the tree, the panels and every
 gesture the reader has on a build. Its view model is cut into one module per
 panel beside it — `chromeview`, `proposalview`, `rowmenu`, `compareview`,

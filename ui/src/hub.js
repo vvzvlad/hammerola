@@ -533,11 +533,13 @@ export const DIFF_COLOURS = Object.freeze({
   removed: '#d1495b',
 });
 
-// The two job states that end a wait. Spelled as the hub spells them
-// (`src/jobs.py`); the two before them — `queued`, `building` — are not named
-// here because nothing on this side has anything different to do about them.
+// The two job states that end a wait, and `building`, from which the Files
+// window counts a commit's build time. Spelled as the hub spells them
+// (`src/jobs.py`); `queued` is not named here because nothing on this side has
+// anything different to do about it.
 export const JOB_DONE = 'done';
 export const JOB_FAILED = 'failed';
+export const JOB_BUILDING = 'building';
 
 /**
  * The header every guarded route reads the token from (`TOKEN_HEADER` in
@@ -679,11 +681,13 @@ export async function startCompare(pid, a, b, view, token) {
   return job;
 }
 
-/** How one queued job is going: `{state, error, ...}` as the hub records it. */
+/** How one queued job is going: `{state, error, ...}` as the hub records it.
+ *  A refusal other than the 403 throws with the hub's status as `status`: a
+ *  404 is a job the hub no longer has, a 5xx a hub that is not up yet. */
 export async function loadJob(id, token) {
   const url = `/api/v1/jobs/${encodeURIComponent(id)}`;
   const response = await guarded(url, { headers: tokenHeader(token) });
-  if (!response.ok) throw new Error(`${url} -> HTTP ${response.status}`);
+  if (!response.ok) throw Object.assign(new Error(`${url} -> HTTP ${response.status}`), { status: response.status });
   return response.json();
 }
 

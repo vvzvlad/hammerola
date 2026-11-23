@@ -556,18 +556,29 @@
   arrival), drawn only while Settings' "Project tabs" is on. What it says of
   the page it reads from the page's `headerParts()`; the two shut each other's
   menus (`shutHeader`, `shutPage`). `headerView` is its values, pure
-- `ui/src/files.jsx` — the Files window BuildPage draws over either page (issue
-  #160): the files of the revision on screen as a tree, the chosen one in the
-  pane beside it — text in the editor, an image, a PDF in a frame with Open
-  and Download, anything else or anything over `LARGE_FILE` as its size and
-  Download; on a narrow window the pane replaces the tree. `filesview.js` is
-  its pure half: the one address the list and every file's bytes come from
-  (`sourceUrl`, `sourceFileUrl`), the rows, a file's kind, decoding and
-  language
+- `ui/src/files.jsx` — the Files window BuildPage draws over either page
+  (issues #160, #161): the files as a tree, the chosen one in the pane beside
+  it — text in the editor, an image, a PDF in a frame with Open and Download,
+  anything else or anything over `LARGE_FILE` as its size and Download; on a
+  narrow window the pane replaces the tree. On the newest revision of its
+  variant it edits: changes, uploads (Upload and drop), deletes, a new file or
+  folder, rename or move, Changes (N) with Revert, and Commit, which uploads
+  the bytes, commits the set (`POST /api/v1/source/<pid>/commit`, SPEC §7.8)
+  and follows the build's job to the new revision or to the refusal
+  (`commitSet`). The set itself lives in BuildPage's state, so closing the
+  window keeps it, and while it is not empty the window shows the set's
+  `base`, whatever revision the page shows. `filesview.js` is its pure half
+  for viewing: the address the list and every file's bytes come from
+  (`sourceUrl`, `baseUrl`, `sourceFileUrl`), the rows with empty folders and
+  marks, a file's kind, decoding and language
+- `ui/src/changeset.js` — the Files window's change set, pure: one record per
+  file however many actions touched it (the fold table of issue #161), the
+  tree it leaves (`overlay`), name checks in the hub's words (`pathProblem`),
+  the default message and the commit's `changes` (`payload`)
 - `ui/src/editor/` — CodeMirror 6 for the Files window, built as the separate
   chunk `static/_v/hammerola-editor.js` that `files.jsx` imports the first
   time it opens a text file: `mount(element, {text, language, readOnly,
-  onChange, theme})` → `{getText, destroy}`, highlighted through
+  onChange, theme})` → `{getText, setReadOnly, destroy}`, highlighted through
   `classHighlighter` with the `--code-*` colours of `tokens.css`. It imports
   only `@codemirror/*`, `@lezer/*` and its own folder (`tests/test_ui_editor.py`)
 - `ui/src/variants.jsx` — the switcher of the project's variants beside the
