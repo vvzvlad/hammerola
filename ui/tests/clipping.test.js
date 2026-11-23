@@ -1,9 +1,11 @@
 // viewer/src/scene/clipping.ts — which solids get a cap on the cut.
 //
-// The stencil cap is right only for a closed surface: on an open mesh (a
-// board's copper, mask and silkscreen, a decal) it paints the whole sheet onto
-// the plane. `closedSurface` decides, from the leaf alone: a B-rep leaf (it has
-// edges) always, a mesh leaf when every welded edge borders two triangles.
+// The stencil cap is right only for a closed surface wound one way: on an open
+// mesh (a board's copper, mask and silkscreen, a decal) it paints the whole
+// sheet onto the plane, and on a closed one with triangles wound against each
+// other it paints those triangles. `closedSurface` decides, from the leaf
+// alone: a B-rep leaf (it has edges) always, a mesh leaf when every welded edge
+// is walked as often from one end as from the other.
 //
 // Reached through the shipped bundle, as peeling.test.js explains: the cull
 // constants, the two functions and `class Clipping` are cut out of its text and
@@ -72,6 +74,16 @@ describe('which solids are capped on the cut', () => {
 
   it('does not cap a sheet on top of one facing down, as a board layer pair is', () => {
     expect(closedSurface(leaf([FACES[0], FACES[1]]))).toBe(false)
+  })
+
+  it('does not cap a closed mesh with one face wound the wrong way', () => {
+    const faces = FACES.map((face) => [...face])
+    faces[0].reverse()
+    expect(closedSurface(leaf(faces))).toBe(false)
+  })
+
+  it('caps a mesh turned inside out as a whole', () => {
+    expect(closedSurface(leaf(FACES.map((face) => [...face].reverse())))).toBe(true)
   })
 
   it('welds a corner written as -0 with the same corner written as 0', () => {

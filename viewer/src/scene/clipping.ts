@@ -70,9 +70,10 @@ interface CapUnit {
 /**
  * HAMMEROLA'S PATCH: whether a solid's cut can be capped. The stencil passes
  * count back faces against front faces along each pixel, which reads "inside"
- * only for a closed surface. On an open one -- a board's copper, mask and
- * silkscreen, a decal -- the count is off wherever the sheet lies behind the
- * plane, and the cap paints the whole sheet onto the plane, hatch and all.
+ * only for a closed surface whose triangles agree on which side is outside. On
+ * an open one -- a board's copper, mask and silkscreen, a decal -- or one wound
+ * against itself, the count is off wherever such triangles lie behind the
+ * plane, and the cap paints them onto the plane, hatch and all.
  *
  * A leaf with edges is a B-rep solid from the tessellator, closed by
  * construction, and is not tested: its tessellation can leave a few edges
@@ -90,11 +91,22 @@ function closedSurface(solid: ObjectGroup): boolean {
 }
 
 /**
- * HAMMEROLA'S PATCH: whether every edge of a triangle mesh borders two
- * triangles or more once coincident vertices are welded, i.e. the mesh has no
- * boundary. Welded by exact position: a mesh leaf may give each face vertices
- * of its own (a KiCad model's do), and the copies of a shared corner are the
- * same numbers.
+ * HAMMEROLA'S PATCH: whether every edge of a triangle mesh is walked as often
+ * from one end as from the other once coincident vertices are welded, i.e. the
+ * mesh has no boundary and its triangles agree on which side is outside. That
+ * is what the stencil count needs: back faces minus front faces along a pixel
+ * then equal the winding number at the plane, nonzero exactly inside.
+ *
+ * Having no single-use edge is not enough. A closed mesh with some triangles
+ * wound the wrong way has no edge used by one triangle alone, yet the count is
+ * off wherever those triangles lie behind the plane, and the cap paints them
+ * at the plane's depth, over everything nearer to the eye.
+ *
+ * A mesh turned inside out as a whole still balances and is still capped: the
+ * count reads -1 inside, which the cap's not-equal-zero test takes.
+ *
+ * Welded by exact position: a mesh leaf may give each face vertices of its own
+ * (a KiCad model's do), and the copies of a shared corner are the same numbers.
  *
  * A T-junction -- a corner of one face lying on an edge of the next -- counts
  * as a boundary, so a mesh tessellated that way is open here even where it
@@ -143,22 +155,25 @@ export function meshClosed(
     }
   }
 
-  // Each undirected edge by its two welded ends; `uses` stops counting at 2.
+  // Each undirected edge by its two welded ends; `balance` counts its walks
+  // from the lower end up and subtracts those from the higher end down.
   let edgeSize = 2;
   while (edgeSize < index.length * 2) edgeSize <<= 1;
   const low = new Int32Array(edgeSize).fill(-1);
   const high = new Int32Array(edgeSize);
-  const uses = new Uint8Array(edgeSize);
+  const balance = new Int32Array(edgeSize);
   for (let t = 0; t + 2 < index.length; t += 3) {
     for (let k = 0; k < 3; k++) {
       let a = welded[index[t + k]];
       let b = welded[index[t + ((k + 1) % 3)]];
       // Two corners welded into one: the triangle is degenerate there.
       if (a === b) continue;
+      let walk = 1;
       if (a > b) {
         const swap = a;
         a = b;
         b = swap;
+        walk = -1;
       }
       let slot =
         (Math.imul(a, 0x9e3779b1) ^ Math.imul(b, 0x85ebca77)) & (edgeSize - 1);
@@ -166,11 +181,11 @@ export function meshClosed(
         if (low[slot] < 0) {
           low[slot] = a;
           high[slot] = b;
-          uses[slot] = 1;
+          balance[slot] = walk;
           break;
         }
         if (low[slot] === a && high[slot] === b) {
-          uses[slot] = 2;
+          balance[slot] += walk;
           break;
         }
         slot = (slot + 1) & (edgeSize - 1);
@@ -178,7 +193,7 @@ export function meshClosed(
     }
   }
   for (let slot = 0; slot < edgeSize; slot++) {
-    if (uses[slot] === 1) return false;
+    if (balance[slot] !== 0) return false;
   }
   return true;
 }

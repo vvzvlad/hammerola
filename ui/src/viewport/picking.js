@@ -90,9 +90,10 @@ export function planePointAt(vp, g, ndc) {
  * Is this solid's cut face on screen at all?
  *
  * Two separate answers in two places in the library. `cull`
- * (viewer/src/scene/clipping.ts:815) hides a cap mesh when its solid is too
+ * (viewer/src/scene/clipping.ts:830) hides a cap mesh when its solid is too
  * small on screen, over the frame budget, not straddled by the plane, or its
- * surface is open (a mesh with a boundary, `closedSurface`). Hiding
+ * surface cannot be capped (a mesh with a boundary or with triangles wound
+ * against each other, `closedSurface`). Hiding
  * a part does not touch the cap: `setShapeVisible`
  * (viewer/src/scene/objectgroup.ts:549) sets `material.visible = false` on the
  * front face and the solid's stencil meshes, and the cap then renders against an
@@ -117,7 +118,7 @@ function capOnScreen(unit, solid) {
  * answers with, or null when no cut stands or the cursor is not over one.
  *
  * The stencil cap is invisible to the id picker: `Clipping._createStencils`
- * (viewer/src/scene/clipping.ts:599) builds it from a quad with no component id
+ * (viewer/src/scene/clipping.ts:614) builds it from a quad with no component id
  * in no pick layer or registry. Giving it one does not work: the pick pass
  * replaces every material (`scene.overrideMaterial`,
  * viewer/src/rendering/id-picking.ts:1221), losing the stencil that trims the
