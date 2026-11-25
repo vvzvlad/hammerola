@@ -8,8 +8,9 @@ is the project's code.
 
   * `glb(view, parts)` -- one view, read and tessellated by the build's own
     code (`build.build`), written out as a binary glTF.
-  * `compress(glb, simplify_error=0.001)` -- gltf-transform's `optimize` with
-    Draco, the Node.js tool the Dockerfile's `gltf` stage installs.
+  * `compress(glb, simplify_error=0.001, flatten=True)` -- gltf-transform's
+    `optimize` with Draco, the Node.js tool the Dockerfile's `gltf` stage
+    installs; `flatten=False` keeps the view's groups as named nodes.
 
 No module-level import of the CAD kernel or numpy, as in the rest of the
 package (src/cadbuild/__init__.py).
@@ -99,9 +100,14 @@ class Hub:
                 (Path(scratch) / entry["file"]).read_text(encoding="utf-8"))
         return document_glb(document)
 
-    def compress(self, glb, simplify_error=SIMPLIFY_ERROR):
+    def compress(self, glb, simplify_error=SIMPLIFY_ERROR, flatten=True):
         """The bytes of a GLB through `gltf-transform optimize` (OPTIMIZE_OPTIONS),
-        simplified within `simplify_error` of the mesh's extent."""
+        simplified within `simplify_error` of the mesh's extent.
+
+        `optimize` flattens the node tree and joins its meshes, one a material
+        for the whole model. `flatten=False` keeps the view's groups as nodes of
+        their own, with their names, and joins only the meshes of one group:
+        a page that hides or shows a group finds it by its name."""
         with tempfile.TemporaryDirectory() as scratch:
             source = Path(scratch) / "in.glb"
             target = Path(scratch) / "out.glb"
@@ -109,7 +115,8 @@ class Hub:
             run = subprocess.run(
                 [NODE, *NODE_FLAGS, GLTF_TRANSFORM, "optimize", str(source),
                  str(target), *OPTIMIZE_OPTIONS,
-                 "--simplify-error", str(simplify_error)],
+                 "--simplify-error", str(simplify_error),
+                 *(() if flatten else ("--flatten", "false"))],
                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
                 errors="replace")
             if run.returncode != 0:

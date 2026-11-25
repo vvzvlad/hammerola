@@ -208,7 +208,9 @@ board of the project, which the hub exports on every build
   and simplified (gltf-transform's `optimize`, with Draco and a simplification
   error of 0.001 of the mesh's extent); text drawn as geometry, such as a
   sticker's, falls apart at that and keeps its letters with
-  `hub.compress(glb, simplify_error=0.0001)`, about twice the bytes. A board shown outside without its routing takes
+  `hub.compress(glb, simplify_error=0.0001)`, about twice the bytes. `optimize` flattens the tree into one mesh a
+  material; `hub.compress(glb, flatten=False)` keeps each group of the view a node of its own, by its name, for a page
+  that hides or shows it. A board shown outside without its routing takes
   `records(..., copper="none")` or `copper="pads"` (`references/boards.md`). The
   hub keeps nothing of it: the function sends the bytes on itself, with what the
   environment gives it — the hub's variables named `BUILD_ENV_*` reach the build
