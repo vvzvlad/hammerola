@@ -37,6 +37,23 @@ def test_compress_hands_optimize_the_simplification_error_it_is_given(monkeypatc
     assert [c[c.index("--simplify-error") + 1] for c in commands] == ["0.001", "0.0001"]
 
 
+def test_compress_keeps_the_groups_as_nodes_only_when_told(monkeypatch):
+    """`optimize` flattens by default; `flatten=False` tells it not to, so the
+    view's groups stay nodes a page can hide by name."""
+    commands = []
+
+    def run(command, **_):
+        commands.append(command)
+        Path(command[command.index("optimize") + 2]).write_bytes(b"compressed")
+        return SimpleNamespace(returncode=0, stdout="")
+
+    monkeypatch.setattr(publish.subprocess, "run", run)
+    Hub().compress(b"glb")
+    Hub().compress(b"glb", flatten=False)
+    assert "--flatten" not in commands[0]
+    assert commands[1][commands[1].index("--flatten") + 1] == "false"
+
+
 def _gltf(glb):
     """The GLB's JSON document, once the header and both chunk headers check out."""
     magic, version, length = struct.unpack_from("<III", glb)

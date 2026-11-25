@@ -51,8 +51,9 @@
 - `src/cadbuild/publish.py` — `Hub`, what a model's `published(hub)` is handed
   once its revision becomes a variant's `latest`: `glb(view, parts)` reads and
   tessellates one view with the build's own code and writes it as a GLB on the
-  standard library, `compress(glb, simplify_error=0.001)` runs gltf-transform's
-  `optimize` with Draco, simplified within that share of the mesh's extent
+  standard library, `compress(glb, simplify_error=0.001, flatten=True)` runs
+  gltf-transform's `optimize` with Draco, simplified within that share of the
+  mesh's extent, the view's groups kept as named nodes with `flatten=False`
   (SPEC §4, the row on the model for an outside website). Nothing is kept on
   the hub: both work in a temporary directory and hand back bytes
 - `gltf/` — the pinned `@gltf-transform/cli` that `compress` runs, and the one
