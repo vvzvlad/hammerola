@@ -103,7 +103,12 @@ DEFAULT_OCCT_THREADS = _default_occt_threads()
 # --- the two ceilings that follow from it ----------------------------------
 # Wall clock and the two numbers derived from it, in one place so the
 # derivations are code. The reasoning for each value is at its field below.
-DEFAULT_WALL_SECONDS = 300.0
+# 300 s unless the deployment's BUILD_WALL_SECONDS says otherwise, read once at
+# import; a value that is no number, or one that leaves the hang dump no room
+# (`Limits.__post_init__`), stops the hub at startup. The owner, for Wiren
+# Board's hub, whose two-board devices spend 215 s of a build in KiCad's
+# exports: «Поднять лимит до 600 с», «ну тока сделай ее енв переменной».
+DEFAULT_WALL_SECONDS = float(os.environ.get("BUILD_WALL_SECONDS") or 300.0)
 
 # The gap the child's traceback needs to land in before the parent's SIGKILL.
 DEFAULT_HANG_DUMP_GAP_SECONDS = 10.0
@@ -192,7 +197,8 @@ class Limits:
     # killed.
     #
     # With MAX_CONCURRENT_BUILDS = 4, the worst honest queue wait is
-    # MAX_QUEUED_JOBS x wall / workers = 16 x 300 / 4 = 20 minutes.
+    # MAX_QUEUED_JOBS x wall / workers = 16 x 300 / 4 = 20 minutes at the
+    # default wall.
     #
     # Two numbers derive from this one: `LEFTOVER_MAX_AGE_SECONDS` in
     # src/store.py (must not sweep a build still queued) and `JOB_TIMEOUT` in
@@ -200,8 +206,11 @@ class Limits:
     # `tests/test_build_ceilings.py` checks both against `worst_honest_wait()`;
     # the prose around them is not checked, so reread both when changing this.
     #
-    # Not settable per deployment: nothing reads the environment and `jobs.py`
-    # calls `run_build` without `limits=`, so these defaults are production.
+    # Set per deployment by BUILD_WALL_SECONDS (DEFAULT_WALL_SECONDS above), the
+    # other fields not: `jobs.py` calls `run_build` without `limits=`, so these
+    # defaults are production. The client's JOB_TIMEOUT, 2700 s, clears the
+    # worst wait up to a wall of 675 s, and LEFTOVER_MAX_AGE_SECONDS, 4 h, up to
+    # 3600 s.
     wall_seconds: float = DEFAULT_WALL_SECONDS
     # Bytes of the child's output kept. The rest is drained and discarded: a
     # child blocked on a full pipe would hang and be reported as a timeout.
@@ -270,7 +279,8 @@ class Limits:
     # disables it. Must stay under `wall_seconds` (`__post_init__` enforces it)
     # or the parent's SIGKILL wins and the stack is lost. The child arms it
     # after its own start, so the 10 s gap covers the slowest start (measured
-    # 0.8-7.6 s). A build that runs out of time dies here, at 290 s, not 300.
+    # 0.8-7.6 s). A build that runs out of time dies here, 10 s before the wall:
+    # at 290 s of the default 300.
     hang_dump_seconds: float | None = DEFAULT_HANG_DUMP_SECONDS
 
     def __post_init__(self):

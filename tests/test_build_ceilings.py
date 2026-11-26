@@ -145,3 +145,24 @@ def test_one_build_never_claims_the_whole_machine():
         f"{MAX_CONCURRENT_BUILDS} builds x {limits.occt_threads} threads = "
         f"{total} on {_usable_cores()} usable cores, and the floor of 2 does "
         f"not explain it.")
+
+
+def test_a_deployment_sets_the_wall_and_its_two_derived_ceilings_follow():
+    """BUILD_WALL_SECONDS raises the wall for one hub (Wiren Board's, 600 s);
+    the hang dump stays 10 s under it and the CPU backstop wall x threads x
+    headroom above it. Read in a process of its own: the module reads the
+    variable once, at import."""
+    import json
+    import os
+    import subprocess
+    import sys
+
+    probe = ("import json; from src.buildproc import limits as l; d = l.DEFAULT_LIMITS; "
+             "print(json.dumps([d.wall_seconds, d.hang_dump_seconds, d.cpu_seconds, d.occt_threads]))")
+    run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True,
+                         env={**os.environ, "BUILD_WALL_SECONDS": "600"})
+    wall, dump, cpu, threads = json.loads(run.stdout)
+    assert (wall, dump) == (600.0, 590.0)
+    assert cpu == int(600 * threads * 1.25)
+    # a hub's own value still lets the client wait out a full queue
+    assert MAX_QUEUED_JOBS * wall / MAX_CONCURRENT_BUILDS <= JOB_TIMEOUT
