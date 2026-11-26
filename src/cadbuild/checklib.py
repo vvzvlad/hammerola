@@ -1191,7 +1191,7 @@ def swept_clearance(moving_positions, fixed, *, names=("moving", "fixed"),
 
     Cost: a bounding-box reject, then one boolean and one distance per body
     pair per stop, tens of milliseconds each, so eighteen stops is under a
-    second against the 300 s build ceiling
+    second against the build ceiling, 300 s by default
     (buildproc.limits.DEFAULT_WALL_SECONDS).
 
     Returns a list of problem strings.

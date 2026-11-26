@@ -85,8 +85,9 @@ services:
       # point of the volume declared above.
       DATA_DIR: /app/data
       # A build's wall clock in seconds, 300 by default (src/buildproc/limits.py): raise it
-      # for models whose boards take long in KiCad's exports. Over 675 the client's wait for
-      # a queued build runs out before the build does.
+      # for models whose boards take long in KiCad's exports. From 720 up, the client's wait
+      # for a build behind a full queue (JOB_TIMEOUT in hammerola/hub.py, 3600 s) runs out
+      # before the build does.
       # BUILD_WALL_SECONDS: 600
       # No retention variable exists: a published build is never deleted, so the volume grows
       # until cleared by hand.

@@ -65,8 +65,8 @@ from .paths import project_root
 # slower than inside `checks()`.
 #
 # Repeating the cap is required for the CPU ceiling: each worker inherits
-# `limits.DEFAULT_CPU_SECONDS` (1875 s = 300 x 5 x 1.25, sized for a pool of
-# five), summed over its threads. An uncapped pool (twenty threads on the hub)
+# `limits.DEFAULT_CPU_SECONDS` (1875 s = 300 x 5 x 1.25 at the default wall,
+# sized for a pool of five), summed over its threads. An uncapped pool (twenty threads on the hub)
 # burns it four times faster, and the SIGKILL leaves nothing in the log that
 # says CPU.
 CHECK_WORKERS = 2
@@ -76,8 +76,8 @@ CHECK_WORKERS = 2
 #
 # Must stay well under `buildproc.limits.DEFAULT_HANG_DUMP_SECONDS` (the whole
 # build's ceiling), or a hung unit would still cost the build everything.
-# `tests/cadbuild/test_checkunits.py` requires a factor of two. At 290 s that
-# ceiling makes this 41% of it.
+# `tests/cadbuild/test_checkunits.py` requires a factor of two. At the default
+# 290 s that ceiling makes this 41% of it.
 #
 # 120 s: the slowest whole checks() measured on prod is 160 s, so a single
 # unit at 120 s is already three quarters of the slowest model's checking.

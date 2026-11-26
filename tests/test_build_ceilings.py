@@ -20,17 +20,22 @@ from hammerola.hub import JOB_TIMEOUT
 from src.jobs import MAX_CONCURRENT_BUILDS, MAX_QUEUED_JOBS
 from src.prereceive import SLOW_BUILD_SECONDS
 from src.buildproc.limits import _usable_cores
+from src.buildproc.runner import HUB_ROOT
 from src.store import LEFTOVER_MAX_AGE_SECONDS
 
 
-def worst_honest_wait():
+def worst_honest_wait(wall=DEFAULT_LIMITS.wall_seconds):
     """Longest a queued push can honestly take: the queue ahead, then its build.
+
+    The last of MAX_QUEUED_JOBS waiting pushes starts once the builds running
+    now and the queue ahead of it have drained, MAX_QUEUED_JOBS /
+    MAX_CONCURRENT_BUILDS walls, and then runs its own.
 
     Deliberately a function rather than a constant, so every assertion below is
     read off the SAME arithmetic. A copy of this multiplication in two tests is
     how the two stop agreeing.
     """
-    return MAX_QUEUED_JOBS * DEFAULT_LIMITS.wall_seconds / MAX_CONCURRENT_BUILDS
+    return (MAX_QUEUED_JOBS / MAX_CONCURRENT_BUILDS + 1) * wall
 
 
 def test_the_cpu_ceiling_stays_a_backstop_and_not_the_binding_limit():
@@ -160,9 +165,11 @@ def test_a_deployment_sets_the_wall_and_its_two_derived_ceilings_follow():
     probe = ("import json; from src.buildproc import limits as l; d = l.DEFAULT_LIMITS; "
              "print(json.dumps([d.wall_seconds, d.hang_dump_seconds, d.cpu_seconds, d.occt_threads]))")
     run = subprocess.run([sys.executable, "-c", probe], capture_output=True, text=True, check=True,
-                         env={**os.environ, "BUILD_WALL_SECONDS": "600"})
+                         cwd=str(HUB_ROOT), env={**os.environ, "BUILD_WALL_SECONDS": "600"})
     wall, dump, cpu, threads = json.loads(run.stdout)
     assert (wall, dump) == (600.0, 590.0)
     assert cpu == int(600 * threads * 1.25)
-    # a hub's own value still lets the client wait out a full queue
-    assert MAX_QUEUED_JOBS * wall / MAX_CONCURRENT_BUILDS <= JOB_TIMEOUT
+    # a hub's own value still lets the client wait out a full queue, and the
+    # leftover sweep still spares the sources of a build that is queued
+    assert JOB_TIMEOUT > worst_honest_wait(wall)
+    assert LEFTOVER_MAX_AGE_SECONDS > worst_honest_wait(wall)

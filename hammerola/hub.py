@@ -155,16 +155,19 @@ POLL_ERROR_MAX_SECONDS = 10.0
 # first notice of a wait is always emitted.
 POLL_NOTICE_MIN_SECONDS = 30
 
-# How long `await_job` waits by default. The worst honest wait is a full queue:
-# MAX_QUEUED_JOBS (16) builds at buildproc's `wall_seconds` (300) over
-# MAX_CONCURRENT_BUILDS (4) workers is twenty minutes; this is that with room to
-# spare.
+# How long `await_job` waits by default. The worst honest wait is a full queue,
+# then the job's own run: MAX_QUEUED_JOBS (16) over MAX_CONCURRENT_BUILDS (4)
+# workers is four rounds of buildproc's `wall_seconds`, plus one, five walls.
+# That is 25 minutes at the default 300 s and 50 at the 600 s a hub may set
+# (BUILD_WALL_SECONDS, Wiren Board's); this clears both, and any wall under
+# 720 s.
 #
-# A COPY: the stdlib-only client cannot import `src.buildproc`. When
-# `wall_seconds` moves, update this (`tests/test_build_ceilings.py` checks that
-# it clears the worst wait); a stale value shows up as a client timeout on a
-# build that is still legitimately queued.
-JOB_TIMEOUT = 2700
+# A COPY: the stdlib-only client cannot import `src.buildproc`, and it cannot
+# know the wall a hub was started with. When the default `wall_seconds` moves,
+# or a hub is set past 720 s, update this (`tests/test_build_ceilings.py` checks
+# that it clears the worst wait at the default and at 600 s); a stale value
+# shows up as a client timeout on a build that is still legitimately queued.
+JOB_TIMEOUT = 3600
 
 TERMINAL_STATES = ("done", "failed")
 

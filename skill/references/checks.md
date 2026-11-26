@@ -95,8 +95,9 @@ held by gravity.
 
 ## Keeping checks fast enough to run
 
-**A build has five minutes of wall clock**, and past it the build is killed
-mid-run: a timeout instead of an answer. What gets there is rarely geometry and
+**A build has five minutes of wall clock** on a hub that keeps the default (its
+operator may give more), and past it the build is killed mid-run: a timeout
+instead of an answer. What gets there is rarely geometry and
 usually `checks()`, which grows with everything the part teaches you.
 
 The kernel lives in the hub's image, so you cannot time this locally: calibrate
@@ -116,8 +117,8 @@ and prints no line. Judge a fix by this line against the build before it, not by
 guessing.
 
 **Three clocks run over one push, and the one that stops you first is your
-own.** The hub kills a build at 300 seconds of wall clock and runs four builds
-at a time; `git push` and `hammerola build` wait out the queue and the build,
+own.** The hub kills a build at 300 seconds of wall clock unless its operator
+set more, and runs four builds at a time; `git push` and `hammerola build` wait out the queue and the build,
 with no ceiling of their own. Act on the three-minute warning the first time.
 What you WILL hit is the timeout of the tool you launched the push with: a
 two-minute shell call cuts the command off, the build goes on and publishes,
@@ -201,7 +202,8 @@ the `base = build_base()` a `checks()` opens with. It is not a selection out of
 call, which happens in another process.
 
 **A unit has its own budget: 120 seconds, enforced by killing the worker.** A
-runaway costs one worker and two minutes, not the whole five-minute wall clock.
+runaway costs one worker and two minutes, not the whole five-minute wall clock
+of a default hub.
 The verdict is a count: `check units: 4 passed`, or `check units: 3 of 4 passed`.
 Section rows sum across workers, so the table's total can exceed the wall clock;
 and a `@cache` is PER WORKER, so a part both workers need is built twice.

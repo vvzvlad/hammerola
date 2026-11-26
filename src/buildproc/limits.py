@@ -193,12 +193,12 @@ class Limits:
     # single-threaded). A model's checks run as units
     # (`checkunits.UNIT_BUDGET_SECONDS`, 120 s each, own worker), so one hung
     # check costs 120 s rather than the whole wall clock. Heavy models must use
-    # units: a model whose checks legitimately need more than five minutes is
-    # killed.
+    # units: a model whose checks legitimately need more than the wall (five
+    # minutes by default) is killed.
     #
-    # With MAX_CONCURRENT_BUILDS = 4, the worst honest queue wait is
-    # MAX_QUEUED_JOBS x wall / workers = 16 x 300 / 4 = 20 minutes at the
-    # default wall.
+    # With MAX_CONCURRENT_BUILDS = 4, the worst honest wait is the queue ahead,
+    # then the build itself: (MAX_QUEUED_JOBS / workers + 1) x wall =
+    # (16 / 4 + 1) x 300 = 25 minutes at the default wall.
     #
     # Two numbers derive from this one: `LEFTOVER_MAX_AGE_SECONDS` in
     # src/store.py (must not sweep a build still queued) and `JOB_TIMEOUT` in
@@ -208,9 +208,9 @@ class Limits:
     #
     # Set per deployment by BUILD_WALL_SECONDS (DEFAULT_WALL_SECONDS above), the
     # other fields not: `jobs.py` calls `run_build` without `limits=`, so these
-    # defaults are production. The client's JOB_TIMEOUT, 2700 s, clears the
-    # worst wait up to a wall of 675 s, and LEFTOVER_MAX_AGE_SECONDS, 4 h, up to
-    # 3600 s.
+    # defaults are production. The client's JOB_TIMEOUT, 3600 s, clears the
+    # worst wait for a wall under 720 s, and LEFTOVER_MAX_AGE_SECONDS, 4 h, for
+    # one under 2880 s.
     wall_seconds: float = DEFAULT_WALL_SECONDS
     # Bytes of the child's output kept. The rest is drained and discarded: a
     # child blocked on a full pipe would hang and be reported as a timeout.
